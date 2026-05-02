@@ -1,12 +1,162 @@
-/* ConnectYourLife — Branding CSS per ESPHome web_server v3 */
+/* ============================================================
+   ConnectYourLife — Parete TV
+   UI Theme v2 — Dark Luxury
+   ESPHome web_server v3
+   ============================================================ */
 
+/* ── Variables ── */
 :root {
-  --primary-color: #1a73e8;
-  --accent-color: #ff9800;
-  --text-color: #212121;
-  --bg-color: #fafafa;
+  --cyl-bg:        #07070f;
+  --cyl-amber:     #f59e0b;
+  --cyl-amber-dim: rgba(245, 158, 11, .15);
+  --cyl-text:      #f1f5f9;
+  --cyl-muted:     #64748b;
+  --cyl-border:    rgba(255, 255, 255, .08);
+  --cyl-surface:   rgba(255, 255, 255, .05);
+  --cyl-easing:    cubic-bezier(.4, 0, .2, 1);
+}
+
+/* ── Page reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  background: var(--cyl-bg);
+  min-height: 100%;
 }
 
 body {
-  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--cyl-text);
+  background:
+    radial-gradient(ellipse 90% 45% at 15% -5%,  rgba(245,158,11,.08) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 35% at 85% 105%, rgba(99,102,241,.05) 0%, transparent 55%),
+    linear-gradient(168deg, #0c0c1d 0%, #07070f 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar            { width: 4px; height: 4px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: rgba(245,158,11,.2); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover{ background: rgba(245,158,11,.45); }
+
+/* ── Selection ── */
+::selection { background: rgba(245,158,11,.25); color: #fff; }
+
+/* ── Branded header (injected by JS) ── */
+#cyl-header {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 9999;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(7, 7, 15, .90);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-bottom: 1px solid rgba(245,158,11,.14);
+  box-shadow: 0 1px 30px rgba(0,0,0,.5);
+}
+
+#cyl-header .cyl-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#cyl-header .cyl-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: .5px;
+  flex-shrink: 0;
+  box-shadow: 0 0 20px rgba(245,158,11,.45), inset 0 1px 0 rgba(255,255,255,.25);
+}
+
+#cyl-header .cyl-names {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+#cyl-header .cyl-brand-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cyl-amber);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+#cyl-header .cyl-device-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cyl-text);
+  letter-spacing: -.4px;
+}
+
+#cyl-header .cyl-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+#cyl-header .cyl-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--cyl-muted);
+}
+
+#cyl-header .cyl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34,197,94,.7);
+  animation: cyl-pulse 2.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+#cyl-header .cyl-clock {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(241,245,249,.65);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .5px;
+  min-width: 64px;
+  text-align: right;
+}
+
+/* ── Keyframes ── */
+@keyframes cyl-pulse {
+  0%,100% { opacity: 1;   box-shadow: 0 0 8px rgba(34,197,94,.7);  }
+  50%      { opacity: .5;  box-shadow: 0 0 4px rgba(34,197,94,.25); }
+}
+
+@keyframes cyl-fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes cyl-header-in {
+  from { opacity: 0; transform: translateY(-100%); }
+  to   { opacity: 1; transform: translateY(0);     }
+}
+
+#cyl-header { animation: cyl-header-in .4s var(--cyl-easing) both; }
