@@ -111,6 +111,7 @@
 <div class="grid">
   <div class="card"><h4>Striscia</h4><p>COB RGBW 3000 K, 24 V, 70 pixel su 5 m, chip <span class="k">WS2814F</span>, ordine byte WRGB.</p></div>
   <div class="card"><h4>Controller</h4><p>ESP32-C3 Super Mini, dato su <span class="k">GPIO5</span>, driver <span class="k">esp32_rmt_led_strip</span>.</p></div>
+  <div class="card"><h4>Nome del dispositivo</h4><p>Ogni unità si identifica da sola con un codice ricavato dal proprio circuito: <span class="k">cyl-esp-<em>codice</em></span>. In Home Assistant si rinomina liberamente.</p></div>
   <div class="card"><h4>Accesso</h4><p>Pannello web sulla porta 80, API REST, stream eventi e MQTT opzionale.</p></div>
   <div class="card"><h4>Alimentazione</h4><p>PSU 24 V per la striscia, 5 V per il controller, <strong>massa in comune</strong>.</p></div>
 </div>
@@ -185,9 +186,10 @@
 
 <div class="note">
   <strong>Nome di rete</strong>
-  "Nome dispositivo" cambia solo l'etichetta mostrata. L'indirizzo di rete
-  (<code>parete-tv-c3-b.local</code>) è fissato al momento della compilazione e per cambiarlo
-  serve un nuovo flash.
+  "Nome dispositivo" cambia l'etichetta mostrata nel pannello. L'indirizzo di rete è invece
+  ricavato dal circuito dell'apparecchio (<code>cyl-esp-<em>codice</em>.local</code>) ed è unico
+  per ogni unità: non cambia e non può entrare in conflitto con le altre. Il nome con cui
+  l'apparecchio appare in Home Assistant si sceglie liberamente da lì.
 </div>
 
 <h2>Rete WiFi</h2>
