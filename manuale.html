@@ -103,7 +103,8 @@
 <p class="lead">
   Striscia COB RGBW 24 V con chip WS2814F, pilotata da ESP32-C3 con firmware ESPHome.
   Questo manuale copre l'uso quotidiano dal pannello web, la configurazione autonoma
-  senza ricompilare, l'integrazione via REST e MQTT, e la diagnosi dei problemi noti.
+  senza ricompilare — comprese le due reti senza fili e l'aggiornamento del firmware —
+  l'integrazione via REST e MQTT, e la diagnosi dei problemi noti.
 </p>
 
 <h2>Il dispositivo in breve</h2>
@@ -152,6 +153,9 @@
     <tr><td><strong>Nome dispositivo</strong></td><td>Nome mostrato in testata al pannello e nel titolo della scheda.</td><td>Nome del device</td></tr>
     <tr><td><strong>Luminosità</strong></td><td>Luminosità generale, da 1 a 100 %.</td><td>100 %</td></tr>
     <tr><td><strong>Spegnimento automatico</strong></td><td>Minuti prima dello spegnimento automatico; 0 disattiva.</td><td>0</td></tr>
+    <tr><td><strong>WiFi 1 rete</strong> e <strong>password</strong></td><td>Rete principale a cui collegarsi.</td><td>Rete configurata in fabbrica</td></tr>
+    <tr><td><strong>WiFi 2 rete</strong> e <strong>password</strong></td><td>Rete di riserva, usata se la principale non risponde.</td><td>Rete di riserva configurata</td></tr>
+    <tr><td><strong>Applica WiFi</strong></td><td>Salva e applica le reti inserite. Prova la prima e, se non aggancia, passa alla seconda.</td><td>—</td></tr>
   </tbody>
 </table>
 </div>
@@ -160,6 +164,45 @@
   "Nome dispositivo" cambia solo l'etichetta mostrata. L'indirizzo di rete
   (<code>parete-tv-c3-b.local</code>) è fissato al momento della compilazione e per cambiarlo
   serve un nuovo flash.
+</div>
+
+<h2>Rete WiFi</h2>
+<p>
+  Il dispositivo può collegarsi a due reti: una principale e una di riserva. Si impostano dal
+  pannello, nei campi <strong>WiFi 1</strong> e <strong>WiFi 2</strong>, e si confermano con
+  <strong>Applica WiFi</strong>. Le password appaiono mascherate e restano memorizzate anche
+  dopo un riavvio.
+</p>
+<p>
+  In <em>Diagnostica</em> il campo <strong>Rete connessa</strong> indica a quale delle due si è
+  effettivamente agganciato, e <strong>Stato WiFi</strong> riporta cosa sta facendo in questo
+  momento.
+</p>
+
+<h3>Se la rete non risponde</h3>
+<p>Il recupero è automatico e procede per gradi:</p>
+<ol>
+  <li><strong>Cinque tentativi sulla rete principale</strong>, uno ogni dodici secondi.</li>
+  <li>Se nessuno va a buon fine, <strong>cinque tentativi sulla rete di riserva</strong>.</li>
+  <li>Falliti tutti, si accende l'<strong>hotspot di emergenza</strong>.</li>
+</ol>
+<div class="ok">
+  <strong>Hotspot di emergenza</strong>
+  Compare una rete senza fili chiamata come il dispositivo, seguita da <em>-fallback</em>.
+  Collegandosi con telefono o computer si apre da sola la pagina di configurazione, come nelle
+  reti degli alberghi: da lì si inseriscono le credenziali della rete di casa. La password
+  dell'hotspot è quella consegnata con l'impianto.
+</div>
+<p>
+  Tutta la sequenza richiede circa due minuti prima che l'hotspot compaia. È voluto: tentativi
+  troppo rapidi farebbero fallire connessioni che avrebbero funzionato, perché non tutti i router
+  rispondono subito.
+</p>
+<div class="warn">
+  <strong>Attenzione quando si cambia rete</strong>
+  Inserendo credenziali sbagliate il dispositivo diventa irraggiungibile finché non compare
+  l'hotspot. Conviene quindi cambiare le reti con l'apparecchio a portata di mano, non quando è
+  già installato in posizione difficile da raggiungere.
 </div>
 
 <h2>Effetti disponibili</h2>
@@ -291,16 +334,32 @@ data: {"id":"binary_sensor/Animazione in corso","value":true,"state":"ON"}</code
     <tr><td>Bianco sporco o giallastro</td><td>Canali colore accesi insieme al bianco</td><td>Usare gli effetti dedicati al bianco, che spengono RGB</td></tr>
     <tr><td>Pannello irraggiungibile</td><td>Rete assente o segnale debole</td><td>Il dispositivo espone una rete propria di emergenza per riconfigurarlo</td></tr>
     <tr><td>Sparisce dalla rete a intermittenza</td><td>Segnale WiFi debole</td><td>Controllare il valore in <em>WiFi Signal</em>: sotto −75 dBm la connessione diventa instabile</td></tr>
+    <tr><td>Compare la rete <em>-fallback</em></td><td>Nessuna delle due reti configurate risponde</td><td>Collegarsi a quella rete e reinserire le credenziali dalla pagina che si apre</td></tr>
+    <tr><td>Si collega alla rete sbagliata</td><td>La rete principale non è più disponibile</td><td>Verificare <em>Rete connessa</em> in diagnostica e aggiornare i campi WiFi</td></tr>
+    <tr><td>L'aggiornamento non arriva a termine</td><td>Segnale insufficiente durante il trasferimento</td><td>Avvicinare il dispositivo al punto di accesso e ripetere</td></tr>
   </tbody>
 </table>
 </div>
 
 <h2>Manutenzione</h2>
+<h3>Aggiornare il firmware</h3>
 <p>
-  Gli aggiornamenti si caricano via rete, senza smontare nulla: il pannello ha una sezione
-  dedicata in fondo alla pagina. Il dispositivo si riavvia da solo al termine e torna online in
-  pochi secondi.
+  Gli aggiornamenti viaggiano sulla rete senza fili: non serve smontare nulla né collegare cavi.
+  In fondo al pannello c'è la sezione <strong>OTA UPDATE</strong>, dove si sceglie il file di
+  aggiornamento e si conferma. Il dispositivo si riavvia da solo al termine e torna disponibile
+  in pochi secondi; la luce resta spenta durante il riavvio.
 </p>
+<p>
+  Il file da caricare ha estensione <code>.bin</code> e viene fornito insieme all'aggiornamento.
+  Chi dispone dell'ambiente di sviluppo può in alternativa inviare l'aggiornamento direttamente
+  dal computer, indicando l'indirizzo del dispositivo.
+</p>
+<div class="note">
+  <strong>Durante l'aggiornamento</strong>
+  Non togliere alimentazione e non allontanare il dispositivo dalla rete: un aggiornamento
+  interrotto a metà può richiedere il collegamento via cavo per essere recuperato. Se il segnale
+  è debole, conviene avvicinare il punto di accesso prima di procedere.
+</div>
 <p>
   Il pulsante <strong>Restart</strong> riavvia il controller. La striscia si spegne durante il
   riavvio e resta spenta finché non viene riaccesa.

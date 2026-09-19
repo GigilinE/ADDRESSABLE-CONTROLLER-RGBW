@@ -9,6 +9,12 @@ substitutions:
   friendly_name: "Parete TV C3 B"
   led_pin: GPIO5             # post level shifter 74AHCT125 (pad in alto a sx)
   num_leds: "70"             # 14 px/m × 5m
+  # Reti di partenza per i campi del pannello: sono le stesse compilate nel
+  # blocco wifi, cosi' i campi non nascono vuoti e "Applica WiFi" e' subito usabile.
+  def_ssid1: !secret wifi_ssid
+  def_pass1: !secret wifi_password
+  def_ssid2: !secret wifi_ssid_backup
+  def_pass2: !secret wifi_password_backup
 
 packages:
   base: !include common/base.yaml
@@ -21,11 +27,27 @@ esphome:
     priority: -100
     then:
       - globals.set: {id: booted, value: 'true'}
+      - lambda: |-
+          // Se un campo e' vuoto (device gia' in uso prima che i default
+          // esistessero) lo si riempie con la rete compilata.
+          if (id(wifi1_ssid).state.empty()) id(wifi1_ssid).publish_state("${def_ssid1}");
+          if (id(wifi1_pass).state.empty()) id(wifi1_pass).publish_state("${def_pass1}");
+          if (id(wifi2_ssid).state.empty()) id(wifi2_ssid).publish_state("${def_ssid2}");
+          if (id(wifi2_pass).state.empty()) id(wifi2_pass).publish_state("${def_pass2}");
 
 esp32:
   board: nologo_esp32c3_super_mini
   framework:
     type: arduino
+
+
+# --- Hotspot di emergenza ---
+# Si unisce al blocco wifi di common/base.yaml (i package fondono le chiavi).
+# Con l'hotspot attivo ci si collega alla rete "${device_name}-fallback" e il
+# captive portal apre da solo la pagina per inserire le credenziali.
+wifi:
+  ap:
+    ap_timeout: 45s     # senza connessione l'hotspot parte da solo
 
 # --- Variabili globali ---
 globals:
@@ -53,6 +75,10 @@ globals:
     type: int
     restore_value: yes
     initial_value: '3'          # frame da 10 ms per ogni pixel del wipe
+  - id: wifi_stato
+    type: int
+    restore_value: no
+    initial_value: '0'          # 0 ok · 1 provo rete 1 · 2 provo rete 2 · 3 hotspot
   - id: anim_enabled
     type: bool
     restore_value: no           # lo ripristina lo switch "Animazione accensione"
@@ -458,6 +484,72 @@ light:
 
 # --- Script toggle principale + timer spegnimento ---
 script:
+  - id: wifi_recovery
+    mode: single
+    then:
+      - globals.set: {id: wifi_stato, value: '1'}
+      - logger.log: "WiFi: nessuna connessione, 5 tentativi sulla rete 1"
+      - repeat:
+          count: 5
+          then:
+            - if:
+                condition:
+                  and:
+                    - not:
+                        wifi.connected:
+                    - lambda: 'return !id(wifi1_ssid).state.empty();'
+                then:
+                  - wifi.configure:
+                      ssid: !lambda 'return id(wifi1_ssid).state;'
+                      password: !lambda 'return id(wifi1_pass).state;'
+                      save: false          # in prova non si sovrascrive il salvato
+                      timeout: 12s
+                      on_connect:
+                        - logger.log: "WiFi: connesso alla rete 1"
+                        - globals.set: {id: wifi_stato, value: '0'}
+
+      - globals.set: {id: wifi_stato, value: '2'}
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - logger.log: "WiFi: rete 1 fallita, 5 tentativi sulla rete 2"
+            - repeat:
+                count: 5
+                then:
+                  - if:
+                      condition:
+                        and:
+                          - not:
+                              wifi.connected:
+                          - lambda: 'return !id(wifi2_ssid).state.empty();'
+                      then:
+                        - wifi.configure:
+                            ssid: !lambda 'return id(wifi2_ssid).state;'
+                            password: !lambda 'return id(wifi2_pass).state;'
+                            save: false
+                            timeout: 12s
+                            on_connect:
+                              - logger.log: "WiFi: connesso alla rete 2"
+                              - globals.set: {id: wifi_stato, value: '0'}
+
+      # Dieci tentativi a vuoto: si lascia il campo all'hotspot. Il ciclo di
+      # connessione viene riavviato e, scaduto ap_timeout senza aggancio,
+      # il fallback AP parte da solo con il captive portal.
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - globals.set: {id: wifi_stato, value: '3'}
+            - logger.log: "WiFi: entrambe le reti fallite, attivo l'hotspot di emergenza"
+            - wifi.disable:
+            - delay: 3s
+            - wifi.enable:
+          else:
+            - globals.set: {id: wifi_stato, value: '0'}
+
   - id: animated_toggle
     mode: restart
     then:
@@ -489,11 +581,52 @@ script:
             - script.execute: animated_toggle
       - lambda: 'id(sleep_minutes).publish_state(0.0f);'
 
+
+# --- Sorveglianza connessione ---
+interval:
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            and:
+              - not:
+                  wifi.connected:
+              - not:
+                  wifi.ap_active:
+              - lambda: 'return id(booted);'
+          then:
+            - script.execute: wifi_recovery
+
 # --- Stato animazione ---
 binary_sensor:
   - platform: template
     name: "Animazione in corso"
     lambda: 'return id(wipe_off_running);'
+
+
+text_sensor:
+  - platform: template
+    name: "Stato WiFi"
+    icon: "mdi:wifi-cog"
+    entity_category: diagnostic
+    lambda: |-
+      switch (id(wifi_stato)) {
+        case 1:  return {"Tentativi rete 1"};
+        case 2:  return {"Tentativi rete 2"};
+        case 3:  return {"Hotspot di emergenza"};
+        default: return {"Connesso"};
+      }
+    update_interval: 10s
+
+  - platform: wifi_info
+    ssid:
+      name: "Rete connessa"
+      icon: "mdi:wifi-check"
+      entity_category: diagnostic
+    ip_address:
+      name: "Indirizzo IP"
+      icon: "mdi:ip-network"
+      entity_category: diagnostic
 
 # --- Sensori diagnostici ---
 sensor:
@@ -567,6 +700,42 @@ number:
 button:
   - platform: restart
     name: "Restart"
+
+  - platform: template
+    name: "Applica WiFi"
+    icon: "mdi:wifi-sync"
+    entity_category: config
+    on_press:
+      # wifi.configure imposta UNA rete per volta: la seconda si prova solo
+      # se la prima non aggancia entro il timeout (on_error).
+      - if:
+          condition:
+            lambda: 'return !id(wifi1_ssid).state.empty();'
+          then:
+            - logger.log:
+                format: "WiFi: provo la rete 1 (%s)"
+                args: ['id(wifi1_ssid).state.c_str()']
+            - wifi.configure:
+                ssid: !lambda 'return id(wifi1_ssid).state;'
+                password: !lambda 'return id(wifi1_pass).state;'
+                save: true
+                timeout: 25s
+                on_error:
+                  - logger.log: "WiFi: rete 1 fallita, provo la rete 2"
+                  - if:
+                      condition:
+                        lambda: 'return !id(wifi2_ssid).state.empty();'
+                      then:
+                        - wifi.configure:
+                            ssid: !lambda 'return id(wifi2_ssid).state;'
+                            password: !lambda 'return id(wifi2_pass).state;'
+                            save: true
+                            timeout: 25s
+                            on_error:
+                              - logger.log: "WiFi: fallite entrambe le reti"
+          else:
+            - logger.log: "WiFi: campo rete 1 vuoto, niente da applicare"
+
 
   - platform: template
     name: "Toggle Luce"
@@ -654,6 +823,54 @@ switch:
 
 # ── Nome mostrato nel pannello (l'hostname resta quello di compilazione) ──
 text:
+  - platform: template
+    name: "WiFi 1 rete"
+    id: wifi1_ssid
+    icon: "mdi:wifi"
+    entity_category: config
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 32
+    restore_value: true
+    initial_value: "${def_ssid1}"
+
+  - platform: template
+    name: "WiFi 1 password"
+    id: wifi1_pass
+    icon: "mdi:wifi-lock"
+    entity_category: config
+    optimistic: true
+    mode: password
+    min_length: 0
+    max_length: 63
+    restore_value: true
+    initial_value: "${def_pass1}"
+
+  - platform: template
+    name: "WiFi 2 rete"
+    id: wifi2_ssid
+    icon: "mdi:wifi"
+    entity_category: config
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 32
+    restore_value: true
+    initial_value: "${def_ssid2}"
+
+  - platform: template
+    name: "WiFi 2 password"
+    id: wifi2_pass
+    icon: "mdi:wifi-lock"
+    entity_category: config
+    optimistic: true
+    mode: password
+    min_length: 0
+    max_length: 63
+    restore_value: true
+    initial_value: "${def_pass2}"
+
   - platform: template
     name: "Nome dispositivo"
     id: txt_nome
