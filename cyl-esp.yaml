@@ -34,6 +34,14 @@ esphome:
   # Le ultime tre coppie del MAC finiscono nel nome: "cyl-esp-d48be1".
   # Ogni board si identifica da sola, senza configurazioni per esemplare.
   name_add_mac_suffix: true
+
+  # Identita' di prodotto. Home Assistant divide questo valore sul punto e lo
+  # usa come produttore e modello: senza, mostrerebbe il nome della scheda
+  # PlatformIO ("nologo_esp32c3_super_mini"), che e' il fornitore del circuito,
+  # non il nostro prodotto.
+  project:
+    name: "ConnectYourLife.cyl_esp32c3_super_mini"
+    version: "1.0"
   on_boot:
     # Molto presto: si registra il riavvio prima che qualunque cosa possa
     # bloccarsi. Il contatore viene azzerato piu' avanti, se il device
@@ -481,6 +489,153 @@ light:
             }
 
       - addressable_lambda:
+          name: "Aurora"
+          update_interval: 50ms
+          lambda: |-
+            static float ph = 0.0f;
+            ph += 0.008f;
+            if (ph > 6.2832f) ph -= 6.2832f;
+            for (int i = 0; i < it.size(); i++) {
+              float x = (float) i / (float) it.size();
+              // tre onde lente sfasate: verde, ciano, viola
+              float v = (sinf(ph + x * 3.1f) + 1.0f) * 0.5f;
+              float c = (sinf(ph * 0.7f + x * 4.3f + 2.0f) + 1.0f) * 0.5f;
+              float p = (sinf(ph * 0.5f + x * 2.2f + 4.0f) + 1.0f) * 0.5f;
+              uint8_t r = (uint8_t)(p * 90);
+              uint8_t g = (uint8_t)(v * 200 + c * 40);
+              uint8_t b = (uint8_t)(c * 150 + p * 90);
+              it[i] = Color(r, g, b, 0);
+            }
+
+      - addressable_lambda:
+          name: "Comete"
+          update_interval: 30ms
+          lambda: |-
+            static float scia[140];
+            static float pos[3] = {0, 0, 0};
+            static bool init = false;
+            int n = it.size();
+            if (initial_run || !init) {
+              init = true;
+              for (int i = 0; i < n; i++) scia[i] = 0.0f;
+              for (int k = 0; k < 3; k++) pos[k] = (float)(k * n) / 3.0f;
+            }
+            for (int i = 0; i < n; i++) scia[i] *= 0.82f;
+            // tre comete a velocita' diverse, cosi' non restano mai allineate
+            const float vel[3] = {0.9f, 0.6f, 1.3f};
+            for (int k = 0; k < 3; k++) {
+              pos[k] += vel[k];
+              if (pos[k] >= n) pos[k] -= n;
+              int i = (int) pos[k];
+              if (i >= 0 && i < n) scia[i] = 1.0f;
+            }
+            for (int i = 0; i < n; i++) {
+              float v = scia[i];
+              it[i] = Color((uint8_t)(v * 120), (uint8_t)(v * 190), (uint8_t)(v * 255), 0);
+            }
+
+      - addressable_lambda:
+          name: "Pioggia"
+          update_interval: 45ms
+          lambda: |-
+            static float goccia[140];
+            int n = it.size();
+            if (initial_run) for (int i = 0; i < n; i++) goccia[i] = 0.0f;
+            // le gocce scendono di una posizione e sfumano
+            for (int i = n - 1; i > 0; i--) goccia[i] = goccia[i-1] * 0.94f;
+            goccia[0] = 0.0f;
+            if ((random_uint32() % 100) < 22) goccia[0] = 1.0f;
+            for (int i = 0; i < n; i++) {
+              float v = goccia[i];
+              it[i] = Color(0, (uint8_t)(v * 90), (uint8_t)(v * 220), (uint8_t)(v * 30));
+            }
+
+      - addressable_lambda:
+          name: "Respiro Colore"
+          update_interval: 35ms
+          lambda: |-
+            auto &st = id(led_strip).current_values;
+            uint8_t cr = (uint8_t)(st.get_red()   * 255);
+            uint8_t cg = (uint8_t)(st.get_green() * 255);
+            uint8_t cb = (uint8_t)(st.get_blue()  * 255);
+            static float ph = 0.0f;
+            ph += 0.035f;
+            if (ph > 6.2832f) ph -= 6.2832f;
+            float v = (sinf(ph) + 1.0f) * 0.5f;
+            v = 0.15f + v * 0.85f;          // non scende mai a buio pieno
+            for (int i = 0; i < it.size(); i++)
+              it[i] = Color((uint8_t)(cr*v), (uint8_t)(cg*v), (uint8_t)(cb*v), 0);
+
+      - addressable_lambda:
+          name: "Gradiente"
+          update_interval: 60ms
+          lambda: |-
+            static float ph = 0.0f;
+            ph += 0.004f;
+            if (ph > 1.0f) ph -= 1.0f;
+            for (int i = 0; i < it.size(); i++) {
+              float x = (float) i / (float) it.size() + ph;
+              if (x > 1.0f) x -= 1.0f;
+              // sfumatura ambra -> magenta -> blu, lenta e continua
+              float a = x * 6.2832f;
+              uint8_t r = (uint8_t)((sinf(a) + 1.0f) * 110.0f + 30.0f);
+              uint8_t g = (uint8_t)((sinf(a + 2.0f) + 1.0f) * 55.0f);
+              uint8_t b = (uint8_t)((sinf(a + 4.0f) + 1.0f) * 120.0f);
+              it[i] = Color(r, g, b, 0);
+            }
+
+      - addressable_lambda:
+          name: "Scintille"
+          update_interval: 55ms
+          lambda: |-
+            static float lum[140];
+            static uint8_t tinta[140];
+            int n = it.size();
+            if (initial_run) for (int i = 0; i < n; i++) { lum[i] = 0.0f; tinta[i] = 0; }
+            for (int k = 0; k < 2; k++) {
+              int i = random_uint32() % n;
+              lum[i] = 1.0f;
+              tinta[i] = random_uint32() % 6;
+            }
+            const uint8_t tav[6][3] = {
+              {255,180,60},{255,80,80},{80,255,140},
+              {90,160,255},{220,90,255},{255,240,200}
+            };
+            for (int i = 0; i < n; i++) {
+              lum[i] *= 0.90f;
+              const uint8_t *c = tav[tinta[i]];
+              it[i] = Color((uint8_t)(c[0]*lum[i]), (uint8_t)(c[1]*lum[i]), (uint8_t)(c[2]*lum[i]), 0);
+            }
+
+      - addressable_lambda:
+          name: "Ritmo"
+          update_interval: 25ms
+          lambda: |-
+            // Pulsa al tempo impostato nello slider "BPM", che Home Assistant
+            // puo' aggiornare a ogni brano. Non e' reattivo al suono: segue il
+            // tempo dichiarato, non l'audio (il device non ha microfono).
+            static float fase = 0.0f;
+            float bpm = (float) id(num_bpm).state;
+            if (bpm < 30.0f) bpm = 30.0f;
+            fase += (bpm / 60.0f) * 0.025f;
+            while (fase >= 1.0f) fase -= 1.0f;
+            // attacco netto sul battere, poi decadimento
+            float e = powf(1.0f - fase, 2.6f);
+            auto &st = id(led_strip).current_values;
+            uint8_t cr = (uint8_t)(st.get_red()   * 255);
+            uint8_t cg = (uint8_t)(st.get_green() * 255);
+            uint8_t cb = (uint8_t)(st.get_blue()  * 255);
+            if (cr + cg + cb < 30) { cr = 255; cg = 90; cb = 20; }
+            int n = it.size();
+            for (int i = 0; i < n; i++) {
+              // il battito parte dal centro e si apre verso i due capi
+              float d = fabsf((float)i - n * 0.5f) / (n * 0.5f);
+              float v = e * (1.0f - d * 0.55f);
+              if (v < 0) v = 0;
+              it[i] = Color((uint8_t)(cr*v), (uint8_t)(cg*v), (uint8_t)(cb*v), 0);
+            }
+
+      - addressable_lambda:
           name: "Wipe White"
           update_interval: 10ms
           lambda: |-
@@ -746,6 +901,20 @@ sensor:
 
 # --- Slider luminosità + timer spegnimento ---
 number:
+  - platform: template
+    name: "BPM"
+    id: num_bpm
+    icon: "mdi:metronome"
+    entity_category: config
+    min_value: 40
+    max_value: 200
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: 120
+    unit_of_measurement: "bpm"
+
   - platform: template
     name: "MQTT porta"
     id: mqtt_porta
