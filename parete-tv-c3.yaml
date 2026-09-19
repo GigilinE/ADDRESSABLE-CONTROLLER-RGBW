@@ -1,15 +1,19 @@
-# ConnectYourLife — Parete TV (Enhanced Panel)
-# Power ON/OFF agganciati all'animazione wipe bidirezionale.
-# Preset colori, effetti fade, pannello completo.
+# ConnectYourLife — Parete TV (variante ESP32-C3 Super Mini)
+# Gemello di parete-tv-c3-b.yaml: stesso contenuto, cambiano solo i nomi.
+# Identico a parete-tv.yaml tranne board, GPIO dati e driver LED.
+# ATTENZIONE: il C3 non ha alcun path DMA per LED addressable (I2S non
+# supportato da NeoPixelBus su C3, use_dma solo su S3/P4). Si usa RMT con
+# refill via ISR — vedi PROJECT.MD "Problema 2" per il contesto.
 
 substitutions:
-  device_name: parete-tv
-  friendly_name: "Parete TV"
-  led_pin: GPIO13            # post level shifter 74AHCT125
+  device_name: parete-tv-c3
+  friendly_name: "Parete TV C3"
+  led_pin: GPIO5             # post level shifter 74AHCT125 (pad in alto a sx)
   num_leds: "70"             # 14 px/m × 5m
 
 packages:
   base: !include common/base.yaml
+  mqtt: !include common/mqtt.yaml
 
 esphome:
   name: ${device_name}
@@ -20,7 +24,7 @@ esphome:
       - globals.set: {id: booted, value: 'true'}
 
 esp32:
-  board: esp32dev
+  board: nologo_esp32c3_super_mini
   framework:
     type: arduino
 
@@ -46,18 +50,36 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: wipe_speed
+    type: int
+    restore_value: yes
+    initial_value: '3'          # frame da 10 ms per ogni pixel del wipe
+  - id: anim_enabled
+    type: bool
+    restore_value: no           # lo ripristina lo switch "Animazione accensione"
+    initial_value: 'true'
 
 # --- Strip LED ---
 light:
-  - platform: neopixelbus
+  - platform: esp32_rmt_led_strip
     id: led_strip
-    type: WRGB               # WS2814F byte order verificato: W, R, G, B
-    variant: SK6812           # timing NRZ 800 kHz compatibile
     pin: ${led_pin}
     num_leds: ${num_leds}
-    method:
-      type: esp32_i2s
-      bus: 1                   # DMA puro — immune a jitter WiFi
+    # --- Timing a specifica datasheet WS2814F V1.1 (World-Semi, pag. 3) ---
+    # NON si usa `chipset: SK6812`: quel preset ESPHome ha periodo 1200 ns
+    # (300+900 / 600+600) mentre il WS2814F richiede TDATA >= 1,25 us, e non
+    # emette alcun reset mentre il chip richiede RES >= 280 us per il latch.
+    # Risoluzione RMT = 80 MHz -> 1 tick = 12,5 ns: tutti i valori sono interi esatti.
+    bit0_high: 300ns           # T0H — spec 220~380 ns          (24 tick)
+    bit0_low: 950ns            # T0L — spec 580 ns~1 us         (76 tick) => periodo 1250 ns
+    bit1_high: 650ns           # T1H — spec 580 ns~1 us         (52 tick)
+    bit1_low: 600ns            # T1L — spec 580 ns~1 us         (48 tick) => periodo 1250 ns
+    reset_high: 0us
+    reset_low: 300us           # RES — spec >= 280 us, 7% di margine (24000 tick)
+    channel_colors: WRGB       # 32 bit, MSB first, ordine WRGB (datasheet pag. 4)
+                               # sostituisce rgb_order+is_wrgb, deprecati dalla 2026.8
+    rmt_symbols: 96            # massimo su C3 (2 blocchi da 48); no DMA su questa variante
+    use_psram: false           # la Super Mini non ha PSRAM
     name: "${friendly_name}"
     # internal: false — esposto per color picker nativo web UI e HA
     default_transition_length: 0s   # workaround ESPHome bug #6621
@@ -68,7 +90,7 @@ light:
     on_turn_on:
       - if:
           condition:
-            lambda: 'return !id(skip_anim);'
+            lambda: 'return !id(skip_anim) && id(anim_enabled);'
           then:
             - globals.set:
                 id: wipe_pos
@@ -89,7 +111,7 @@ light:
     on_turn_off:
       - if:
           condition:
-            lambda: 'return !id(wipe_off_running);'
+            lambda: 'return !id(wipe_off_running) && id(anim_enabled);'
           then:
             - globals.set:
                 id: wipe_off_running
@@ -265,9 +287,134 @@ light:
             for (int i = 0; i < it.size(); i++) it[i] = Color(1, 0, 0, 18);
 
       - addressable_lambda:
-          name: "Wipe White"
+          name: "Scanner"
+          update_interval: 25ms
+          lambda: |-
+            static int pos = 0; static int dir = 1;
+            pos += dir;
+            if (pos >= (int)it.size() - 1) dir = -1;
+            if (pos <= 0) dir = 1;
+            for (int i = 0; i < it.size(); i++) {
+              int d = abs(i - pos);
+              uint8_t v = d > 4 ? 0 : (uint8_t)(255 >> (d * 2));
+              it[i] = Color(v, 0, 0, 0);
+            }
+
+      - addressable_lambda:
+          name: "Stelle"
+          update_interval: 60ms
+          lambda: |-
+            static float lum[100];
+            if (initial_run) for (int i = 0; i < it.size(); i++) lum[i] = 0.0f;
+            // ogni frame qualche pixel si accende, tutti gli altri sfumano
+            for (int k = 0; k < 2; k++) {
+              int i = random_uint32() % it.size();
+              lum[i] = 1.0f;
+            }
+            for (int i = 0; i < it.size(); i++) {
+              lum[i] *= 0.88f;
+              uint8_t w = (uint8_t)(lum[i] * 255.0f);
+              it[i] = Color(0, 0, 0, w);
+            }
+
+      - addressable_lambda:
+          name: "Fuoco"
+          update_interval: 50ms
+          lambda: |-
+            static float heat[100];
+            if (initial_run) for (int i = 0; i < it.size(); i++) heat[i] = 0.0f;
+            // raffredda, propaga verso l'alto, accende nuove braci alla base
+            for (int i = 0; i < it.size(); i++)
+              heat[i] -= (float)(random_uint32() % 20) / 255.0f * 1.2f;
+            for (int i = it.size() - 1; i >= 2; i--)
+              heat[i] = (heat[i-1] + heat[i-2] + heat[i-2]) / 3.0f;
+            if ((random_uint32() % 100) < 55) {
+              int i = random_uint32() % 5;
+              heat[i] += (float)(random_uint32() % 96 + 160) / 255.0f;
+            }
+            for (int i = 0; i < it.size(); i++) {
+              if (heat[i] < 0) heat[i] = 0;
+              if (heat[i] > 1) heat[i] = 1;
+              float h = heat[i];
+              uint8_t r = (uint8_t)(h * 255);
+              uint8_t g = (uint8_t)(h * h * 110);
+              it[i] = Color(r, g, 0, 0);
+            }
+
+      - addressable_lambda:
+          name: "Arcobaleno Lento"
+          update_interval: 60ms
+          lambda: |-
+            static float ph = 0.0f;
+            ph += 0.006f;
+            if (ph > 1.0f) ph -= 1.0f;
+            for (int i = 0; i < it.size(); i++) {
+              float h = ph + (float)i / (float)it.size() * 0.35f;
+              if (h > 1.0f) h -= 1.0f;
+              float a = h * 6.2832f;
+              uint8_t r = (uint8_t)((sinf(a)          + 1.0f) * 127.5f);
+              uint8_t g = (uint8_t)((sinf(a + 2.094f) + 1.0f) * 127.5f);
+              uint8_t b = (uint8_t)((sinf(a + 4.189f) + 1.0f) * 127.5f);
+              it[i] = Color(r, g, b, 0);
+            }
+
+      - addressable_lambda:
+          name: "Meteora"
           update_interval: 30ms
           lambda: |-
+            static int pos = 0;
+            static float trail[100];
+            if (initial_run) { pos = 0; for (int i = 0; i < it.size(); i++) trail[i] = 0.0f; }
+            for (int i = 0; i < it.size(); i++) trail[i] *= 0.80f;
+            trail[pos] = 1.0f;
+            pos = (pos + 1) % it.size();
+            for (int i = 0; i < it.size(); i++) {
+              uint8_t w = (uint8_t)(trail[i] * 255.0f);
+              uint8_t b = (uint8_t)(trail[i] * 90.0f);
+              it[i] = Color(0, 0, b, w);
+            }
+
+      - addressable_lambda:
+          name: "Lampo"
+          update_interval: 90ms
+          lambda: |-
+            // buio quasi sempre, con lampi improvvisi che riempiono la striscia
+            static int flash = 0;
+            if (flash > 0) {
+              flash--;
+              for (int i = 0; i < it.size(); i++) it[i] = Color(0, 0, 0, 255);
+            } else {
+              if ((random_uint32() % 100) < 6) flash = 1 + random_uint32() % 3;
+              for (int i = 0; i < it.size(); i++) it[i] = Color(0, 0, 0, 8);
+            }
+
+      - addressable_lambda:
+          name: "Onda Colore"
+          update_interval: 40ms
+          lambda: |-
+            auto &s = id(led_strip).current_values;
+            uint8_t cr = (uint8_t)(s.get_red()   * 255);
+            uint8_t cg = (uint8_t)(s.get_green() * 255);
+            uint8_t cb = (uint8_t)(s.get_blue()  * 255);
+            static float ph = 0.0f;
+            ph += 0.09f;
+            if (ph > 6.2832f) ph -= 6.2832f;
+            for (int i = 0; i < it.size(); i++) {
+              float w = (sinf(ph + (float)i * 0.25f) + 1.0f) * 0.5f;
+              it[i] = Color((uint8_t)(cr*w), (uint8_t)(cg*w), (uint8_t)(cb*w), 0);
+            }
+
+      - addressable_lambda:
+          name: "Wipe White"
+          update_interval: 10ms
+          lambda: |-
+            // La velocita' e' regolabile dal pannello: si scandisce a 10 ms e si
+            // avanza solo ogni N frame, con N dato dallo slider "Velocita' wipe".
+            static uint8_t tick = 0;
+            uint8_t ogni = (uint8_t)id(wipe_speed);
+            if (ogni < 1) ogni = 1;
+            if (++tick < ogni && !initial_run) return;
+            tick = 0;
             int pos = id(wipe_pos);
             int dir = id(wipe_direction);
             // wipe ON: bianco fisso; wipe OFF: colore corrente
@@ -360,6 +507,23 @@ sensor:
 
 # --- Slider luminosità + timer spegnimento ---
 number:
+  - platform: template
+    name: "Velocita wipe"
+    id: num_wipe_speed
+    icon: "mdi:speedometer"
+    entity_category: config
+    min_value: 1
+    max_value: 10
+    step: 1
+    mode: slider
+    optimistic: true
+    restore_value: true
+    initial_value: 3
+    on_value:
+      - globals.set:
+          id: wipe_speed
+          value: !lambda 'return (int)x;'
+
   - platform: template
     id: sleep_minutes
     name: "Spegnimento automatico"
@@ -459,3 +623,46 @@ button:
           id: led_strip
           effect: "Luce Notte"
       - globals.set: {id: skip_anim, value: 'false'}
+
+# ── Interruttori di configurazione (gestibili dal pannello) ──
+switch:
+  - platform: template
+    name: "MQTT"
+    id: sw_mqtt
+    icon: "mdi:transit-connection-variant"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # ricorda la scelta e la riapplica al boot
+    turn_on_action:
+      - mqtt.enable:
+    turn_off_action:
+      - mqtt.disable:
+
+  - platform: template
+    name: "Animazione accensione"
+    id: sw_anim
+    icon: "mdi:motion-play"
+    entity_category: config
+    optimistic: true
+    # Lo switch e' la fonte di verita': il suo stato viene ripristinato al boot e
+    # riallinea il global. Con una lambda di stato + optimistic i due si
+    # contendevano il valore e al primo avvio vinceva la memoria non inizializzata.
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - globals.set: {id: anim_enabled, value: 'true'}
+    turn_off_action:
+      - globals.set: {id: anim_enabled, value: 'false'}
+
+# ── Nome mostrato nel pannello (l'hostname resta quello di compilazione) ──
+text:
+  - platform: template
+    name: "Nome dispositivo"
+    id: txt_nome
+    icon: "mdi:rename-box"
+    entity_category: config
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 30
+    restore_value: true
+    initial_value: "${friendly_name}"

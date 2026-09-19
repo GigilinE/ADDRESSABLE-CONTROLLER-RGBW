@@ -2,6 +2,7 @@
 secrets.yaml
 
 # ESPHome
+.venv/
 .esphome/
 __pycache__/
 *.pyc

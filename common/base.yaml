@@ -22,6 +22,11 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
+  # Senza questo il device si riavvia se nessun client API si connette per 15
+  # minuti (default reboot_timeout: 15min) — e al riavvio la luce torna spenta.
+  # Va a 0 perche' questi device devono funzionare anche standalone, comandati
+  # dal solo pannello web, senza Home Assistant collegato.
+  reboot_timeout: 0s
 
 ota:
   - platform: esphome
@@ -30,7 +35,7 @@ ota:
 web_server:
   port: 80
   version: 3
-  local: true
+  local: false
   include_internal: false
   css_include: "custom/connectyourlife.css"
   js_include: "custom/connectyourlife.js"

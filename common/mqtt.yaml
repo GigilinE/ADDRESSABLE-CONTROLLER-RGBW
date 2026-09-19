@@ -1,0 +1,49 @@
+# Canale MQTT — stato in uscita e comandi in ingresso
+# Incluso solo dai device che lo usano (non da common/base.yaml, per non
+# imporlo al config di produzione su WROOM).
+#
+# Perche' MQTT e non i soli REST/SSE gia' offerti da web_server: qui e' il
+# device a iniziare la connessione verso il broker, quindi funziona anche
+# quando il backend non sta nella LAN del cliente (NAT, cloud, VPN assente).
+#
+# Cosa fa da solo, senza altre automazioni:
+#   - pubblica lo stato di OGNI entita' a ogni cambiamento
+#       connectyourlife/<device>/<dominio>/<nome>/state
+#   - resta in ascolto dei comandi
+#       connectyourlife/<device>/<dominio>/<nome>/command
+#   - annuncia se stesso a Home Assistant via discovery
+#   - pubblica online/offline su .../status (will message: l'offline lo manda
+#     il broker se il device sparisce senza salutare)
+
+mqtt:
+  id: mqtt_client
+  # Non si connette da solo all'avvio: comanda lo switch "MQTT" del pannello,
+  # che ripristina l'ultima scelta fatta dall'utente (vedi switch nel device).
+  enable_on_boot: false
+  broker: !secret mqtt_broker
+  port: 1883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+
+  topic_prefix: connectyourlife/${device_name}
+
+  # Discovery: HA crea le entita' da solo. Da mettere a false se lo stesso
+  # device viene aggiunto a HA anche via API ESPHome, altrimenti compare due volte.
+  discovery: true
+  discovery_prefix: homeassistant
+
+  # Stesso motivo dell'api.reboot_timeout in base.yaml: senza questo il device
+  # si riavvia se il broker resta irraggiungibile per 15 minuti (default), e al
+  # riavvio la luce torna spenta. Questi device devono restare accesi anche se
+  # il broker cade.
+  reboot_timeout: 0s
+
+  birth_message:
+    topic: connectyourlife/${device_name}/status
+    payload: online
+    retain: true
+
+  will_message:
+    topic: connectyourlife/${device_name}/status
+    payload: offline
+    retain: true

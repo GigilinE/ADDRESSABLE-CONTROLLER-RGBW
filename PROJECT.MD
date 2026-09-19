@@ -58,9 +58,11 @@ Il WS2814F è la variante FSOP-8 della famiglia WS2814A di World-Semi. **Non va 
 | VDD | 4.5–5.5 V | Chip alimentato a 5V |
 | **VIH min** | **0.7 × VDD ≈ 3.5 V** | **ESP32 a 3.3V è SOTTO SOGLIA** |
 | VIL max | 1.5 V | |
-| Timing | T0H 220–380 ns, T1H 580 ns–1 µs | Identico a SK6812 / WS2812B |
-| Reset | ≥ 280 µs | |
-| Data rate | 800 kbps | |
+| Timing | T0H 220–380 ns, T1H 580 ns–1 µs | T0L e T1L: 580 ns–1 µs |
+| **TDATA (periodo bit)** | **≥ 1,25 µs** | **NON identico a SK6812: il preset ESPHome sta a 1,20 µs** |
+| Reset (RES) | ≥ 280 µs low | Necessario per il latch; il preset SK6812 non lo emette |
+| Data rate | FMAX ≥ 600 kbps garantito, fino a 800 kbps | 800 kbps = TDATA 1,25 µs, cioè il limite |
+| tPLZ (DIN→DOUT) | ≤ 300 ns | Fino a 2 m fra due pixel senza circuiti aggiuntivi |
 
 ### Cablaggio COXO non standard
 
@@ -319,6 +321,107 @@ Il firmware compilato si trova in:
 
 ---
 
+## Studio settembre 2026 — timing a specifica e migrazione del driver
+
+Revisione fatta rileggendo il datasheet ufficiale (`WS2814F 40041.pdf`, World-Semi V1.1,
+estratto dal PDF: usa font CID, serve `pypdf` per leggerlo) e verificando il sorgente di
+ESPHome installato. Tre risultati cambiano scelte già prese.
+
+### Risultato 1 — NeoPixelBus è deprecato su ESP32
+
+ESPHome **2026.6** ha deprecato il componente `neopixelbus` su ESP32: la libreria upstream
+(Makuna) non è più mantenuta e non compila su ESP-IDF 6. Rimozione **entro la 2027.1**.
+Migrazione indicata dalla documentazione: `esp32_rmt_led_strip` per le luci clockless
+(WS2811, WS2812, SK6812, WS2814…). ESP8266 non è toccato.
+
+Conseguenza sull'architettura: `method: type: esp32_i2s, bus: 1` — cioè il DMA che risolve
+il Problema 2 — **non ha un equivalente su `esp32_rmt_led_strip`**, dove `use_dma` è
+ammesso solo sulle varianti ESP32-S3 e ESP32-P4. Quindi il vantaggio DMA del WROOM-32 ha
+una scadenza: alla rimozione di neopixelbus, WROOM-32 e C3 finiscono entrambi su RMT con
+rifornimento dei simboli via ISR. Se il DMA va conservato come scelta strutturale, il
+target è **ESP32-S3** (`use_dma: true` con `rmt_symbols` alto), non il WROOM-32.
+
+File `parete-tv-rmt.yaml`: stesso hardware di `parete-tv.yaml` (GPIO13, WROOM-32) già
+migrato a `esp32_rmt_led_strip`, per provare la migrazione senza toccare il config in
+produzione.
+
+### Risultato 2 — `chipset: SK6812` viola due parametri del WS2814F
+
+Il preset `SK6812` di ESPHome (`components/esp32_rmt_led_strip/light.py`) vale
+`bit0 300/900`, `bit1 600/600`, `reset 0/0`. Confrontato col datasheet (pag. 3):
+
+| Parametro | Spec WS2814F | Preset SK6812 | Esito |
+|---|---|---|---|
+| T0H | 220~380 ns | 300 ns | in spec |
+| T0L | 580 ns~1 µs | 900 ns | in spec |
+| T1H | 580 ns~1 µs | 600 ns | in spec |
+| T1L | 580 ns~1 µs | 600 ns | in spec |
+| **TDATA** | **≥ 1,25 µs** | **1,20 µs** | **fuori spec del 4%** |
+| **RES** | **≥ 280 µs low** | **0 (nessun reset)** | **fuori spec** |
+
+I singoli bit sono corretti, il periodo no. E senza reset il latch dipende solo dalla pausa
+naturale fra due frame: con `update_interval: 30ms` la pausa è enorme e funziona, ma non è
+una garanzia — è esattamente la classe di fragilità del latching parziale già osservato.
+
+Timing corretti, adottati in `parete-tv-c3.yaml` e `parete-tv-rmt.yaml` al posto di
+`chipset:` (le due chiavi sono mutuamente esclusive, e i sei valori custom vanno dati tutti):
+
+```yaml
+bit0_high: 300ns    # T0H, spec 220~380
+bit0_low: 950ns     # T0L, spec 580~1000   -> periodo 1250 ns
+bit1_high: 650ns    # T1H, spec 580~1000
+bit1_low: 600ns     # T1L, spec 580~1000   -> periodo 1250 ns
+reset_high: 0us
+reset_low: 300us    # RES, spec >= 280 us
+```
+
+La risoluzione del RMT è il clock di default a 80 MHz (1 tick = 12,5 ns, confermato in
+`led_strip.cpp:141`), quindi 300/950/650/600 ns e 300 µs cadono su numeri interi di tick:
+24, 76, 52, 48, 24000. Nessun arrotondamento. Se dovessero restare glitch, il margine si
+allarga portando i periodi a 1,3 µs (`bit0_low: 1000ns`, `bit1_high: 700ns`) — resta tutto
+dentro i range del datasheet e scende a 769 kbps, sopra i 600 kbps garantiti da FMAX.
+
+### Risultato 3 — i 3,3 V sono fuori specifica, non "al limite"
+
+Il datasheet dà `VIH ≥ 0,7 × VDD` sul pin DIN con VDD 4,5~5,5 V, e un'isteresi di 0,35 V.
+La soglia è quindi **3,15~3,85 V** (3,5 V a VDD 5 V): un GPIO ESP32 a 3,3 V non la
+raggiunge in tutto il campo di alimentazione. Non è margine ridotto, è violazione. Il
+74AHCT125 resta obbligatorio e la ragione ora è quantificata: è della famiglia HCT, quindi
+accetta in ingresso soglie TTL (VIH 2 V) e riemette a 5 V.
+
+Il byte order **WRGB** è confermato dal datasheet, non solo empiricamente: pag. 4,
+"32 bit, MSB first, ordine WRGB" — `W7…W0 R7…R0 G7…G0 B7…B0`.
+
+### Riscontro sul campo — collegamento diretto senza level shifter
+
+Su ESP32-C3 con i timing a specifica (periodo 1,25 µs e `reset_low: 300us`) la strip funziona
+**collegata direttamente al GPIO, senza 74AHCT125**, verificata accesa e stabile con tutti gli
+effetti. Il progetto era partito dal presupposto che il level shifter fosse indispensabile, ma
+quel giudizio era stato formato con il preset `chipset: SK6812`, che viola TDATA e non emette
+reset: parte del flickering attribuito al livello logico era probabilmente di natura temporale.
+
+Resta vero che 3,3 V sono sotto la soglia `0,7 × VDD` dichiarata dal datasheet, quindi il margine
+è ridotto e non garantito su tutto il campo di alimentazione. Il riscontro vale per questa
+installazione, con cavo dati corto e a temperatura ambiente. Se compaiono sfarfallii dopo ore di
+accensione, con la strip calda o su tratte lunghe, il 74AHCT125 resta il rimedio corretto.
+
+---
+
+### Da fare alla prossima release di ESPHome
+
+La versione installata è la 2026.4.1, l'ultima pubblicata è la **2026.8.2**. Dalla 2026.8
+`rgb_order`, `is_rgbw` e `is_wrgb` sono deprecati su `esp32_rmt_led_strip` in favore di una
+sola chiave `channel_colors`, che accetta il layout completo dei canali:
+
+```yaml
+channel_colors: WRGB    # sostituisce rgb_order: RGB + is_wrgb: true
+```
+
+Le vecchie chiavi continuano a funzionare con un warning fino alla **2027.3**. Nessun preset
+`WS2814` nativo è stato aggiunto in nessuna release: i timing custom restano la via corretta.
+
+---
+
 ## Riferimenti tecnici
 
 ### Datasheet
@@ -328,6 +431,9 @@ Il firmware compilato si trova in:
 
 ### ESPHome
 
+- **Deprecazione neopixelbus su ESP32** (2026.6, rimozione ≤ 2027.1): esphome.io/components/light/neopixelbus
+- **esp32_rmt_led_strip** (driver di migrazione, timing custom, use_dma S3/P4): esphome.io/components/light/esp32_rmt_led_strip
+- **`channel_colors`** (2026.8, sostituisce rgb_order/is_rgbw/is_wrgb): esphome.io/blog/2026/08/19/esphome-2026-8/
 - NeoPixelBus component: esphome.io/components/light/neopixelbus
 - web_server v3: esphome.io/components/web_server
 - addressable_lambda: esphome.io/components/light/neopixelbus#addressable-light-effects

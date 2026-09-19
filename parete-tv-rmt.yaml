@@ -1,10 +1,13 @@
-# ConnectYourLife — Parete TV (Enhanced Panel)
-# Power ON/OFF agganciati all'animazione wipe bidirezionale.
-# Preset colori, effetti fade, pannello completo.
+# ConnectYourLife — Parete TV (WROOM-32, driver esp32_rmt_led_strip)
+# Percorso di migrazione da neopixelbus, deprecato su ESP32 in ESPHome 2026.6
+# e in rimozione entro la 2027.1 (upstream NeoPixelBus non piu' mantenuto,
+# non compila su ESP-IDF 6). Stesso hardware di parete-tv.yaml, GPIO13 incluso.
+# Rispetto a parete-tv.yaml si perde il DMA dell'I2S: RMT rifornisce i simboli
+# via ISR. Da validare sotto carico WiFi/OTA prima di sostituire il config live.
 
 substitutions:
-  device_name: parete-tv
-  friendly_name: "Parete TV"
+  device_name: parete-tv-rmt
+  friendly_name: "Parete TV RMT"
   led_pin: GPIO13            # post level shifter 74AHCT125
   num_leds: "70"             # 14 px/m × 5m
 
@@ -49,15 +52,24 @@ globals:
 
 # --- Strip LED ---
 light:
-  - platform: neopixelbus
+  - platform: esp32_rmt_led_strip
     id: led_strip
-    type: WRGB               # WS2814F byte order verificato: W, R, G, B
-    variant: SK6812           # timing NRZ 800 kHz compatibile
     pin: ${led_pin}
     num_leds: ${num_leds}
-    method:
-      type: esp32_i2s
-      bus: 1                   # DMA puro — immune a jitter WiFi
+    # --- Timing a specifica datasheet WS2814F V1.1 (World-Semi, pag. 3) ---
+    # NON si usa `chipset: SK6812`: quel preset ESPHome ha periodo 1200 ns
+    # (300+900 / 600+600) mentre il WS2814F richiede TDATA >= 1,25 us, e non
+    # emette alcun reset mentre il chip richiede RES >= 280 us per il latch.
+    # Risoluzione RMT = 80 MHz -> 1 tick = 12,5 ns: tutti i valori sono interi esatti.
+    bit0_high: 300ns           # T0H — spec 220~380 ns          (24 tick)
+    bit0_low: 950ns            # T0L — spec 580 ns~1 us         (76 tick) => periodo 1250 ns
+    bit1_high: 650ns           # T1H — spec 580 ns~1 us         (52 tick)
+    bit1_low: 600ns            # T1L — spec 580 ns~1 us         (48 tick) => periodo 1250 ns
+    reset_high: 0us
+    reset_low: 300us           # RES — spec >= 280 us, 7% di margine (24000 tick)
+    channel_colors: WRGB       # 32 bit, MSB first, ordine WRGB (datasheet pag. 4)
+                               # sostituisce rgb_order+is_wrgb, deprecati dalla 2026.8
+    rmt_symbols: 192           # ESP32 classico: blocchi da 64, buffer piu' capiente
     name: "${friendly_name}"
     # internal: false — esposto per color picker nativo web UI e HA
     default_transition_length: 0s   # workaround ESPHome bug #6621
