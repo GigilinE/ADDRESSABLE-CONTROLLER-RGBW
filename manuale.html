@@ -116,17 +116,32 @@
 </div>
 
 <h2>Uso quotidiano</h2>
+<p class="lead">
+  Il pannello si apre digitando l'indirizzo del dispositivo nel browser, da computer o da
+  telefono. Non serve installare nulla e non serve internet: basta essere sulla stessa rete.
+</p>
+
 <h3>Accendere e spegnere</h3>
 <p>
-  Il pulsante <strong>Toggle Luce</strong> accende e spegne con l'animazione a scorrimento:
-  all'accensione la luce sale da un capo all'altro, allo spegnimento rientra nella direzione
-  opposta. A fine corsa la striscia resta in bianco fisso.
+  Il grande <strong>pulsante rotondo</strong> accende e spegne. All'accensione la luce sale da un
+  capo all'altro della striscia; allo spegnimento rientra nella direzione opposta, mantenendo il
+  colore che aveva. La <strong>barra di anteprima</strong> sopra il pulsante riproduce lo stesso
+  movimento, così si vede cosa sta facendo la striscia anche stando in un'altra stanza.
 </p>
+<p>
+  Accanto al pulsante c'è la <strong>luminosità</strong>, che resta invariata accendendo e
+  spegnendo: la si imposta una volta e la si ritrova.
+</p>
+
 <h3>Colori e scene</h3>
 <p>
-  I pulsanti <strong>Bianco</strong>, <strong>Rosso</strong>, <strong>Verde</strong>,
-  <strong>Blu</strong> e <strong>Notte</strong> impostano una scena immediata. Per un colore
-  libero si usa il selettore della luce e l'effetto <em>Solido</em>, che segue il colore scelto.
+  Il riquadro <strong>Colore</strong> raccoglie le scene pronte: bianco, rosso, verde, blu e
+  notte. Quella attiva resta evidenziata. Il riquadro <strong>Effetti</strong> contiene tutte le
+  animazioni disponibili; <em>Nessun effetto</em> riporta la striscia alla luce fissa.
+</p>
+<p>
+  Nella colonna di destra <strong>Notte</strong> è a portata di mano, perché è la scena che si usa
+  più spesso la sera.
 </p>
 <div class="note">
   <strong>Bianco pulito</strong>
@@ -151,6 +166,7 @@
     <tr><td><strong>Animazione accensione</strong></td><td>Disattivandolo, accensione e spegnimento diventano immediati, senza scorrimento.</td><td>Acceso</td></tr>
     <tr><td><strong>Velocità wipe</strong></td><td>Durata dello scorrimento: 1 è il più rapido, 10 il più lento.</td><td>3</td></tr>
     <tr><td><strong>Nome dispositivo</strong></td><td>Nome mostrato in testata al pannello e nel titolo della scheda.</td><td>Nome del device</td></tr>
+    <tr><td><strong>Tipo strip</strong></td><td>Tonalità della striscia installata: calda, naturale o fredda. Allinea i colori mostrati a quelli reali.</td><td>Calda 3000K</td></tr>
     <tr><td><strong>Luminosità</strong></td><td>Luminosità generale, da 1 a 100 %.</td><td>100 %</td></tr>
     <tr><td><strong>Spegnimento automatico</strong></td><td>Minuti prima dello spegnimento automatico; 0 disattiva.</td><td>0</td></tr>
     <tr><td><strong>WiFi 1 rete</strong> e <strong>password</strong></td><td>Rete principale a cui collegarsi.</td><td>Rete configurata in fabbrica</td></tr>
@@ -159,6 +175,14 @@
   </tbody>
 </table>
 </div>
+<div class="note">
+  <strong>Tipo di strip</strong>
+  Le strisce RGBW esistono con bianchi diversi: caldo, naturale o freddo. L'impostazione dice al
+  pannello quale è installata, così l'anteprima mostra la tonalità che si vede davvero in parete
+  invece di un bianco generico. Non modifica la luce emessa: il colore del LED bianco è una
+  caratteristica fisica della striscia, decisa in fabbrica.
+</div>
+
 <div class="note">
   <strong>Nome di rete</strong>
   "Nome dispositivo" cambia solo l'etichetta mostrata. L'indirizzo di rete
@@ -204,6 +228,18 @@
   l'hotspot. Conviene quindi cambiare le reti con l'apparecchio a portata di mano, non quando è
   già installato in posizione difficile da raggiungere.
 </div>
+
+<h2>La barra di anteprima</h2>
+<p>
+  La barra sotto il titolo rappresenta la striscia, un segmento per pixel. Segue quello che
+  succede davvero: si accende progressivamente da un capo, si spegne nel verso opposto, e assume
+  il colore dell'effetto in corso. La velocità del movimento è la stessa impostata per la
+  striscia, quindi i due restano in passo.
+</p>
+<p>
+  È una rappresentazione fedele nei tempi e nei colori, non una ripresa dal vivo: il pannello sa
+  quando la luce cambia e con che velocità, e rifà lo stesso percorso.
+</p>
 
 <h2>Effetti disponibili</h2>
 <div class="grid">
@@ -333,6 +369,8 @@ data: {"id":"binary_sensor/Animazione in corso","value":true,"state":"ON"}</code
     <tr><td>Si spegne dopo circa un quarto d'ora</td><td>Riavvio automatico per assenza di client collegati</td><td>Già corretto nel firmware; se ricompare, verificare il segnale WiFi</td></tr>
     <tr><td>Bianco sporco o giallastro</td><td>Canali colore accesi insieme al bianco</td><td>Usare gli effetti dedicati al bianco, che spengono RGB</td></tr>
     <tr><td>Pannello irraggiungibile</td><td>Rete assente o segnale debole</td><td>Il dispositivo espone una rete propria di emergenza per riconfigurarlo</td></tr>
+    <tr><td>Il pannello mostra dati vecchi</td><td>Pagina rimasta in memoria del browser</td><td>Ricaricare tenendo premuto Ctrl mentre si clicca l'aggiornamento</td></tr>
+    <tr><td>I colori dell'anteprima non corrispondono</td><td>Tipo di strip impostato diversamente da quella montata</td><td>Correggere <em>Tipo strip</em> nella configurazione</td></tr>
     <tr><td>Sparisce dalla rete a intermittenza</td><td>Segnale WiFi debole</td><td>Controllare il valore in <em>WiFi Signal</em>: sotto −75 dBm la connessione diventa instabile</td></tr>
     <tr><td>Compare la rete <em>-fallback</em></td><td>Nessuna delle due reti configurate risponde</td><td>Collegarsi a quella rete e reinserire le credenziali dalla pagina che si apre</td></tr>
     <tr><td>Si collega alla rete sbagliata</td><td>La rete principale non è più disponibile</td><td>Verificare <em>Rete connessa</em> in diagnostica e aggiornare i campi WiFi</td></tr>

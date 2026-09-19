@@ -1,526 +1,754 @@
 /* ============================================================
    ConnectYourLife — Parete TV
-   UI Enhancer v3 — ESPHome web_server v3
+   Pannello custom: replica del design "LED Controller"
+   Sostituisce l'interfaccia di ESPHome web_server v3.
+
+   Il frontend nativo viene nascosto e al suo posto si disegna questa
+   interfaccia, che parla con il device via API REST e riceve gli stati
+   dallo stream /events. Il pannello originale resta raggiungibile dal
+   link in fondo, come rete di sicurezza.
    ============================================================ */
 
-(async () => {
+(() => {
+  'use strict';
 
-  /* ── 1. Header ── */
-  const hdr = document.createElement('div');
-  hdr.id = 'cyl-header';
-  hdr.innerHTML = `
-    <div class="cyl-left">
-      <div class="cyl-mark">CYL</div>
-      <div class="cyl-names">
-        <span class="cyl-brand-name">ConnectYourLife</span>
-        <span class="cyl-device-name">Parete TV</span>
-      </div>
-    </div>
-    <div class="cyl-right">
-      <div class="cyl-status">
-        <span class="cyl-dot"></span>
-        <span>Connesso</span>
-      </div>
-      <span class="cyl-clock" id="cyl-clock">--:--:--</span>
-    </div>
-  `;
-  document.body.insertBefore(hdr, document.body.firstChild);
-  document.body.style.paddingTop = '64px';
+  /* ── Palette e misure del design ── */
+  const T = {
+    bg: '#121110', surf: '#1c1a18', surf2: '#262320',
+    line: '#2b2724', line2: '#363129', line3: '#5a534c',
+    amber: '#f2a33a', amberHi: '#ffc46b', ink: '#1a1206',
+    text: '#f3efe9', text2: '#cfc8bf', muted: '#a39d94',
+    green: '#3ddc84', red: '#ff3b30', blue: '#2f8cff',
+  };
 
-  /* ── 1b. Nome del device dal campo "Nome dispositivo" ──
-     L'hostname e' fissato a compilazione, ma il nome MOSTRATO qui e' un text
-     template modificabile dal pannello: lo si rilegge periodicamente cosi'
-     l'header segue la modifica senza ricompilare nulla. */
-  async function aggiornaNome() {
-    try {
-      const r = await fetch('/text/' + encodeURIComponent('Nome dispositivo'),
-                            { cache: 'no-store' });
-      if (!r.ok) return;
-      const j = await r.json();
-      const nome = (j.value ?? j.state ?? '').toString().trim();
-      const el = hdr.querySelector('.cyl-device-name');
-      if (nome && el && el.textContent !== nome) {
-        el.textContent = nome;
-      }
-      if (nome) {
-        window.__cylNome = nome;
-        document.title = nome;
-        applicaTitolo();
-      }
-    } catch (e) { /* entita' assente su questo device: si tiene il nome statico */ }
-  }
-
-  /* Il titolo grande e' un <h1> nello shadow DOM di esp-app, alimentato da
-     config.title che il frontend riscrive a ogni ping SSE con il friendly_name
-     compilato. Va quindi riapplicato, non impostato una volta sola. */
-  function applicaTitolo() {
-    const nome = window.__cylNome;
-    if (!nome) return;
-    const app = document.querySelector('esp-app');
-    const h1 = app && app.shadowRoot && app.shadowRoot.querySelector('h1');
-    if (h1 && h1.textContent.trim() !== nome) h1.textContent = nome;
-  }
-  aggiornaNome();
-  setInterval(aggiornaNome, 10000);
-
-  /* ── 2. Clock ── */
-  function tick() {
-    const el = document.getElementById('cyl-clock');
-    if (el) el.textContent = new Date().toLocaleTimeString('it-IT');
-  }
-  tick();
-  setInterval(tick, 1000);
-
-  /* ── 3. Shadow DOM CSS ── */
-  const SHADOW_CSS = `
-    :host {
-      display: block;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      color: #f1f5f9;
-    }
-
-    /* ── Layout esterno: una sola colonna (quella dei log e' nascosta) ──
-       Nota: nel frontend v3 attuale .flex-grid-half contiene le COLONNE, non le
-       entity-row. La griglia delle card sta su .tab-container, piu' sotto. */
-    .flex-grid-half {
-      display: grid !important;
-      grid-template-columns: 1fr !important;
-      gap: 0 !important;
-      padding: 28px 24px 72px !important;
-      max-width: 100% !important;
-      width: 100% !important;
-      box-sizing: border-box !important;
-      align-items: start !important;
-    }
-
-    .flex-grid-half .col {
-      width: 100% !important;
-      margin: 0 !important;
-      overflow: visible !important;
-    }
-
-    /* ── Griglia responsive delle card: le .entity-row sono figlie di questo ── */
-    .tab-container {
-      display: grid !important;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
-      gap: 12px !important;
-      align-items: start !important;
-      width: 100% !important;
-      box-sizing: border-box !important;
-      border: none !important;
-      border-radius: 0 !important;
-      padding: 0 !important;
-      background: none !important;
-    }
-
-    /* Hide logs */
-    #col_logs { display: none !important; }
-
-    /* Dim native top bar */
-    .top-icon, #logo, #beat, #scheme {
-      opacity: .18 !important;
-      transition: opacity .2s !important;
-    }
-    .top-icon:hover, #logo:hover, #beat:hover, #scheme:hover {
-      opacity: .55 !important;
-    }
-
-    /* ── Section header ── */
-    .tab-header {
-      grid-column: 1 / -1 !important;
-      width: 100% !important;
-      box-sizing: border-box !important;
-      background: none !important;
-      border-radius: 0 !important;
-      max-width: none !important;
-      display: flex !important;
-      align-items: center !important;
-      gap: 10px !important;
-      font-size: 11px !important;
-      font-weight: 700 !important;
-      text-transform: uppercase !important;
-      letter-spacing: 3px !important;
-      color: #64748b !important;
-      padding: 22px 2px 10px !important;
-      border-bottom: 1px solid rgba(255,255,255,.06) !important;
-      margin-bottom: 2px !important;
-    }
-    .tab-header::before {
-      content: '' !important;
-      display: block !important;
-      width: 3px !important;
-      height: 13px !important;
-      background: linear-gradient(180deg, #f59e0b 0%, #ef4444 100%) !important;
-      border-radius: 2px !important;
-      flex-shrink: 0 !important;
-    }
-
-    /* ── Controls that need full width ── */
-    .cyl-row--slider,
-    .cyl-row--select,
-    .cyl-row--number,
-    .cyl-row--color {
-      grid-column: 1 / -1 !important;
-    }
-
-    /* ── Entity card (generic) ── */
-    .entity-row {
-      display: flex !important;
-      justify-content: space-between !important;
-      align-items: center !important;
-      gap: 14px !important;
-      flex-wrap: wrap !important;
-      box-sizing: border-box !important;
-      max-width: 100% !important;
-      background: rgba(255,255,255,.055) !important;
-      border: 1px solid rgba(255,255,255,.09) !important;
-      border-radius: 16px !important;
-      padding: 18px 20px !important;
-      margin-bottom: 0 !important;
-      transition: border-color .3s, background .3s, box-shadow .3s !important;
-      animation: cyl-up .4s cubic-bezier(.4,0,.2,1) both !important;
-      box-shadow: 0 2px 14px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.065) !important;
-    }
-    .entity-row:hover {
-      border-color: rgba(245,158,11,.32) !important;
-      background: rgba(255,255,255,.075) !important;
-      box-shadow: 0 0 0 1px rgba(245,158,11,.1), 0 8px 32px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.09) !important;
-    }
-
-    /* ── Preset-button tiles (singlebutton-row) ── */
-    .singlebutton-row {
-      background: rgba(255,255,255,.04) !important;
-      border: 1px solid rgba(255,255,255,.07) !important;
-      border-radius: 16px !important;
-      padding: 10px !important;
-      margin-bottom: 0 !important;
-      box-shadow: 0 2px 8px rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.04) !important;
-      transition: border-color .25s, background .25s !important;
-    }
-    .singlebutton-row:hover {
-      border-color: rgba(255,255,255,.12) !important;
-      background: rgba(255,255,255,.06) !important;
-    }
-    /* Hide redundant label inside button tiles */
-    .singlebutton-row .entity {
-      display: none !important;
-    }
-    /* Make button fill the tile */
-    .singlebutton-row button,
-    .singlebutton-row .abutton {
-      width: 100% !important;
-      min-height: 52px !important;
-      font-size: 14px !important;
-      font-weight: 700 !important;
-      letter-spacing: .3px !important;
-      border-radius: 12px !important;
-    }
-
-    /* ── Entity label ── */
-    .entity {
-      font-size: 10px !important;
-      font-weight: 700 !important;
-      text-transform: uppercase !important;
-      letter-spacing: 1.5px !important;
-      color: #475569 !important;
-      margin-bottom: 12px !important;
-    }
-
-    /* ── Generic buttons ── */
-    .abutton, button {
-      background: rgba(255,255,255,.07) !important;
-      color: #cbd5e1 !important;
-      border: 1px solid rgba(255,255,255,.1) !important;
-      border-radius: 11px !important;
-      padding: 10px 20px !important;
-      font-size: 13px !important;
-      font-weight: 600 !important;
-      font-family: inherit !important;
-      cursor: pointer !important;
-      transition: background .2s, border-color .2s, color .2s, box-shadow .2s !important;
-      outline: none !important;
-      letter-spacing: .2px !important;
-      min-height: 40px !important;
-    }
-    .abutton:hover, button:hover {
-      background: rgba(245,158,11,.14) !important;
-      border-color: rgba(245,158,11,.45) !important;
-      color: #fbbf24 !important;
-    }
-    .abutton:active, button:active {
-      transform: scale(.96) !important;
-    }
-
-    /* ── Range slider with gradient fill ── */
-    input[type=range] {
-      -webkit-appearance: none !important;
-      appearance: none !important;
-      height: 5px !important;
-      background: linear-gradient(
-        to right,
-        #f59e0b var(--val, 0%),
-        rgba(255,255,255,.12) var(--val, 0%)
-      ) !important;
-      border-radius: 99px !important;
-      outline: none !important;
-      cursor: pointer !important;
-      width: 100% !important;
-    }
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none !important;
-      width: 22px !important;
-      height: 22px !important;
-      border-radius: 50% !important;
-      background: #f59e0b !important;
-      box-shadow: 0 0 14px rgba(245,158,11,.65), 0 0 0 3px rgba(245,158,11,.2) !important;
-      cursor: pointer !important;
-      transition: box-shadow .2s !important;
-    }
-    input[type=range]::-webkit-slider-thumb:hover {
-      box-shadow: 0 0 22px rgba(245,158,11,.85), 0 0 0 5px rgba(245,158,11,.25) !important;
-    }
-    input[type=range]::-moz-range-thumb {
-      width: 22px !important;
-      height: 22px !important;
-      border-radius: 50% !important;
-      background: #f59e0b !important;
-      border: none !important;
-      cursor: pointer !important;
-    }
-
-    .range-value {
-      color: #f59e0b !important;
-      font-weight: 700 !important;
-      font-size: 15px !important;
-      min-width: 44px !important;
-      text-align: right !important;
-    }
-
-    /* ── Dropdown ── */
-    select {
-      background-color: rgba(255,255,255,.07) !important;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2364748b'/%3E%3C/svg%3E") !important;
-      background-repeat: no-repeat !important;
-      background-position: calc(100% - 14px) center !important;
-      background-size: 10px !important;
-      color: #e2e8f0 !important;
-      border: 1px solid rgba(255,255,255,.1) !important;
-      border-radius: 10px !important;
-      padding: 11px 36px 11px 14px !important;
-      font-size: 13px !important;
-      font-weight: 500 !important;
-      font-family: inherit !important;
-      cursor: pointer !important;
-      outline: none !important;
-      transition: border-color .2s, background-color .2s !important;
-      -webkit-appearance: none !important;
-      appearance: none !important;
-      width: 100% !important;
-    }
-    select:hover, select:focus {
-      border-color: rgba(245,158,11,.5) !important;
-      background-color: rgba(255,255,255,.1) !important;
-    }
-    select option {
-      background: #0d0d1e !important;
-      color: #e2e8f0 !important;
-    }
-
-    /* ── Number / text inputs ── */
-    input[type=number], input[type=text] {
-      background: rgba(255,255,255,.07) !important;
-      color: #e2e8f0 !important;
-      border: 1px solid rgba(255,255,255,.1) !important;
-      border-radius: 10px !important;
-      padding: 10px 13px !important;
-      font-size: 14px !important;
-      font-family: inherit !important;
-      outline: none !important;
-      transition: border-color .2s, background .2s !important;
-      width: 100% !important;
-    }
-    input[type=number]:focus, input[type=text]:focus {
-      border-color: rgba(245,158,11,.5) !important;
-      background: rgba(255,255,255,.1) !important;
-    }
-
-    /* ── Color picker ── */
-    .colorpicker {
-      margin-top: 12px !important;
-      border-radius: 12px !important;
-      overflow: hidden !important;
-      box-shadow: 0 4px 24px rgba(0,0,0,.5) !important;
-    }
-
-    /* ── Sensor / state ── */
-    .state, .sensor-state {
-      font-size: 14px !important;
-      font-weight: 500 !important;
-      color: #94a3b8 !important;
-    }
-
-    /* ── Contenimento dei controlli dentro la card ──
-       Senza min-width:0 un flex item non scende sotto la sua larghezza
-       intrinseca e sborda sulla card adiacente. */
-    .entity-row > * {
-      min-width: 0 !important;
-      max-width: 100% !important;
-    }
-
-    esp-range-slider {
-      flex: 1 1 180px !important;
-      min-width: 0 !important;
-      max-width: 100% !important;
-    }
-
-    esp-switch { flex-shrink: 0 !important; }
-
-    /* ── Enter animation ── */
-    @keyframes cyl-up {
-      from { opacity: 0; transform: translateY(10px); }
-      to   { opacity: 1; transform: translateY(0);    }
-    }
-  `;
-
-  /* ── 4. Inject CSS into shadow root via adoptedStyleSheets ── */
-  const cylSheet = new CSSStyleSheet();
-  cylSheet.replaceSync(SHADOW_CSS);
-
-  async function injectIntoShadow(el) {
-    if (!el || el._cyl) return;
-    if (!el.shadowRoot) {
-      await new Promise(res => {
-        let tries = 0;
-        const t = setInterval(() => {
-          if (el.shadowRoot || ++tries > 40) { clearInterval(t); res(); }
-        }, 50);
-      });
-    }
-    if (!el.shadowRoot) return;
-    el._cyl = true;
-    const existing = el.shadowRoot.adoptedStyleSheets;
-    if (!existing.includes(cylSheet)) {
-      el.shadowRoot.adoptedStyleSheets = [...existing, cylSheet];
-    }
-  }
-
-  /* ── 5. Classify entity rows for grid spanning ── */
-  function classifyRows(root) {
-    root.querySelectorAll('.entity-row:not([data-cyl-cls])').forEach(row => {
-      row.setAttribute('data-cyl-cls', '1');
-      // I controlli sono web component: l'input vero sta nel loro shadow DOM,
-      // quindi si classifica sul tag, non su cio' che contengono.
-      if (row.querySelector('esp-range-slider, input[type=range]'))     row.classList.add('cyl-row--slider');
-      else if (row.querySelector('select'))                             row.classList.add('cyl-row--select');
-      else if (row.querySelector('input[type=number]'))                 row.classList.add('cyl-row--number');
-      else if (row.querySelector('.colorpicker, input[type=color]'))    row.classList.add('cyl-row--color');
-    });
-  }
-
-  /* ── 6. Slider gradient fill (sets --val CSS variable) ── */
-  function enhanceSliders(root) {
-    root.querySelectorAll('input[type=range]:not([data-cyl-enh])').forEach(inp => {
-      inp.setAttribute('data-cyl-enh', '1');
-      function updateFill() {
-        const min = parseFloat(inp.min) || 0;
-        const max = parseFloat(inp.max) || 100;
-        const pct = ((parseFloat(inp.value) - min) / (max - min) * 100).toFixed(1) + '%';
-        inp.style.setProperty('--val', pct);
-      }
-      updateFill();
-      inp.addEventListener('input', updateFill);
-      inp.addEventListener('change', updateFill);
-    });
-    /* Recurse into nested shadow roots */
-    root.querySelectorAll('*').forEach(el => {
-      if (el.shadowRoot) enhanceSliders(el.shadowRoot);
-    });
-  }
-
-  /* ── 7. Stagger card entry animations ── */
-  function staggerCards(root) {
-    root.querySelectorAll('.entity-row:not([data-cyl-stg]), .singlebutton-row:not([data-cyl-stg])').forEach((row, i) => {
-      row.setAttribute('data-cyl-stg', '1');
-      row.style.animationDelay = `${i * 35}ms`;
-    });
-  }
-
-  /* ── 8. Wait for esp-app ── */
-  await customElements.whenDefined('esp-app');
-  await new Promise(r => requestAnimationFrame(r));
-  await new Promise(r => requestAnimationFrame(r));
-
-  const app = document.querySelector('esp-app');
-  if (!app) return;
-
-  await injectIntoShadow(app);
-
-  /* ── 9. Button color map ── */
-  const COLOR_MAP = [
-    { match: 'toggle luce', bg: 'rgba(245,158,11,.2)',  border: 'rgba(245,158,11,.55)', color: '#fbbf24', glow: 'rgba(245,158,11,.55)' },
-    { match: 'bianco',      bg: 'rgba(255,253,220,.1)', border: 'rgba(255,253,220,.4)', color: '#fefce8', glow: 'rgba(255,253,220,.5)' },
-    { match: 'rosso',       bg: 'rgba(239,68,68,.15)',  border: 'rgba(239,68,68,.45)',  color: '#fca5a5', glow: 'rgba(239,68,68,.5)'  },
-    { match: 'verde',       bg: 'rgba(34,197,94,.13)',  border: 'rgba(34,197,94,.45)',  color: '#86efac', glow: 'rgba(34,197,94,.5)'  },
-    { match: 'blu',         bg: 'rgba(59,130,246,.16)', border: 'rgba(59,130,246,.5)',  color: '#93c5fd', glow: 'rgba(59,130,246,.55)'},
-    { match: 'notte',       bg: 'rgba(99,102,241,.14)', border: 'rgba(99,102,241,.45)', color: '#a5b4fc', glow: 'rgba(99,102,241,.5)' },
-    { match: 'restart',     bg: 'rgba(100,116,139,.1)', border: 'rgba(100,116,139,.2)', color: '#94a3b8', glow: ''                    },
+  /* ── Preset colore: etichetta, effetto del firmware, tinta ── */
+  const PRESETS = [
+    { label: 'Bianco', effetto: 'Statico Bianco', col: null },  // tinta dalla strip scelta
+    { label: 'Rosso',  effetto: 'Statico Rosso',  col: '#ff3b30' },
+    { label: 'Verde',  effetto: 'Statico Verde',  col: '#3ddc84' },
+    { label: 'Blu',    effetto: 'Statico Blu',    col: '#2f8cff' },
+    { label: 'Notte',  effetto: 'Luce Notte',     col: '#6b5bd6' },
   ];
 
-  function colorButtons(root) {
-    root.querySelectorAll('button, .abutton').forEach(btn => {
-      if (btn._cyl_colored) return;
-      const label = btn.textContent.trim().toLowerCase();
-      const rule = COLOR_MAP.find(r => label.includes(r.match));
-      if (!rule) return;
-      btn._cyl_colored = true;
-      Object.assign(btn.style, {
-        background:  rule.bg,
-        borderColor: rule.border,
-        color:       rule.color,
-      });
-      if (rule.glow) {
-        btn.addEventListener('mouseenter', () => {
-          btn.style.boxShadow = `0 0 18px ${rule.glow}, 0 0 0 1px ${rule.border}`;
-          btn.style.background = rule.bg.replace(/[\d.]+\)$/, m => (parseFloat(m) * 1.5).toFixed(2) + ')');
-        });
-        btn.addEventListener('mouseleave', () => {
-          btn.style.boxShadow = '';
-          btn.style.background = rule.bg;
-        });
+  /* ── Stato locale, alimentato dallo stream eventi ── */
+  const S = {
+    nomeLuce: null, on: false, brightness: 100, effetto: '', effetti: [],
+    colore: { r: 255, g: 255, b: 255, w: 255 },
+    autoOff: 0, wipe: 3, anim: true, mqtt: false, nome: '',
+    ip: '—', rete: '—', segnale: '—', uptime: 0, statoWifi: '—',
+    numPixel: 70, configAperta: false, tipoStrip: 'RGBW calda 3000K',
+  };
+
+  /* Tonalita' con cui disegnare il canale bianco, secondo la strip montata:
+     il W di una 3000K e' ambrato, quello di una 6500K quasi neutro. */
+  const BIANCHI = {
+    // campionato dalla resa reale della strip calda
+    'RGBW calda 3000K':    '#f9daa2',
+    // a meta' strada fra la calda e il bianco: non piu' ambrata, non ancora bianca
+    'RGBW naturale 4000K': '#fcebcc',
+    'RGBW fredda 6500K':   '#fdfbf6',
+  };
+  const biancoStrip = () => BIANCHI[S.tipoStrip] || '#ffd9a0';
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const enc = encodeURIComponent;
+
+  /* ── Comandi verso il device ── */
+  async function cmd(percorso, params) {
+    const qs = params ? '?' + new URLSearchParams(params) : '';
+    try {
+      await fetch(percorso + qs, { method: 'POST', cache: 'no-store' });
+    } catch (e) { /* il device risponde comunque allo stream */ }
+  }
+  const luce      = (azione, p) => S.nomeLuce && cmd(`/light/${enc(S.nomeLuce)}/${azione}`, p);
+  const premi     = (nome)      => cmd(`/button/${enc(nome)}/press`);
+  const numero    = (nome, v)   => cmd(`/number/${enc(nome)}/set`, { value: v });
+  const interrutt = (nome, on)  => cmd(`/switch/${enc(nome)}/turn_${on ? 'on' : 'off'}`);
+  const testo     = (nome, v)   => cmd(`/text/${enc(nome)}/set`, { value: v });
+  const scelta    = (nome, v)   => cmd(`/select/${enc(nome)}/set`, { option: v });
+
+  /* ── Stili ── */
+  const CSS = `
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap');
+    *,*::before,*::after{box-sizing:border-box}
+    html{background:${T.bg}}
+    body{margin:0;background:${T.bg};color:${T.text};
+      font-family:'Manrope','Segoe UI',system-ui,-apple-system,sans-serif;
+      -webkit-font-smoothing:antialiased}
+    esp-app{display:none!important}
+
+    .cyl-wrap{max-width:1280px;margin:0 auto;padding-block:24px 40px;
+      padding-left:16px;padding-right:16px;display:flex;flex-direction:column;gap:24px}
+
+    .cyl-top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+    .cyl-brandbox{display:flex;align-items:center;gap:14px}
+    .cyl-mark{width:44px;height:44px;border-radius:12px;background:${T.amber};
+      display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;
+      font-weight:700;font-size:13px;letter-spacing:.04em;color:${T.ink};flex-shrink:0}
+    .cyl-brand{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:${T.muted}}
+    .cyl-nome{font-family:'Sora',sans-serif;font-size:22px;font-weight:600;line-height:1.1}
+    .cyl-pills{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .cyl-pill{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;
+      border-radius:999px;background:${T.surf};border:1px solid ${T.line};
+      font-size:13px;font-weight:600;color:${T.text2}}
+    .cyl-dot{width:8px;height:8px;border-radius:50%;background:${T.green};
+      box-shadow:0 0 8px ${T.green};flex-shrink:0}
+
+    .cyl-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;align-items:start}
+    .cyl-col{display:flex;flex-direction:column;gap:20px;min-width:0}
+    .cyl-card{border-radius:22px;background:${T.surf};border:1px solid ${T.line}}
+    .cyl-sec{display:flex;flex-direction:column;gap:16px;padding:24px 28px}
+    .cyl-lab{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:${T.muted}}
+    .cyl-tit{font-family:'Sora',sans-serif;font-size:17px;font-weight:600}
+    .cyl-hint{font-size:13px;color:${T.muted}}
+
+    .cyl-strip{display:flex;gap:3px;padding:14px;border-radius:14px;
+      background:${T.bg};border:1px solid ${T.line};overflow:hidden}
+    .cyl-px{flex:1 1 0;min-width:0;height:34px;border-radius:3px;background:${T.surf2};
+      transition:background .12s linear,box-shadow .12s linear}
+
+    .cyl-power{width:116px;height:116px;border-radius:50%;border:1px solid ${T.line2};
+      background:${T.surf2};color:${T.muted};display:flex;align-items:center;justify-content:center;
+      cursor:pointer;transition:all .2s ease}
+    .cyl-power.on{background:${T.amber};border-color:${T.amber};color:${T.ink};
+      box-shadow:0 0 42px -6px ${T.amber}}
+
+    .cyl-range{-webkit-appearance:none;appearance:none;width:100%;height:44px;margin:0;
+      background:transparent;cursor:pointer;display:block}
+    .cyl-range::-webkit-slider-runnable-track{height:8px;border-radius:999px;background:${T.line}}
+    .cyl-range::-moz-range-track{height:8px;border-radius:999px;background:${T.line}}
+    .cyl-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:26px;height:26px;
+      margin-top:-9px;border-radius:50%;background:${T.amber};border:4px solid ${T.bg};
+      box-shadow:0 0 0 1px ${T.amber}}
+    .cyl-range::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:${T.amber};
+      border:4px solid ${T.bg};box-shadow:0 0 0 1px ${T.amber}}
+
+    .cyl-btn{font-family:inherit;cursor:pointer;color:${T.text};
+      transition:background .15s,border-color .15s,transform .1s}
+    .cyl-btn:hover{border-color:${T.line3}}
+    .cyl-btn:active{transform:scale(.98)}
+
+    .cyl-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+      height:84px;border-radius:16px;background:${T.surf2};border:1px solid ${T.line};
+      font-size:14px;font-weight:700}
+    .cyl-chip[aria-pressed="true"]{border-color:${T.amber};background:rgba(242,163,58,.12)}
+    .cyl-chipdot{width:16px;height:16px;border-radius:50%}
+
+    .cyl-fx{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+      height:64px;border-radius:14px;background:${T.surf2};border:1px solid ${T.line};
+      font-size:12.5px;font-weight:700;padding:6px;text-align:center;line-height:1.2}
+    .cyl-fx[aria-pressed="true"]{border-color:${T.amber};background:rgba(242,163,58,.12);color:${T.amberHi}}
+
+    .cyl-sw{width:52px;height:30px;border-radius:999px;background:${T.line};border:none;
+      padding:3px;cursor:pointer;flex-shrink:0;transition:background .2s}
+    .cyl-sw[aria-checked="true"]{background:${T.amber}}
+    .cyl-knob{display:block;width:24px;height:24px;border-radius:50%;background:${T.text};
+      transition:transform .2s}
+    .cyl-sw[aria-checked="true"] .cyl-knob{transform:translateX(22px);background:${T.ink}}
+
+    .cyl-ico{width:40px;height:40px;border-radius:12px;background:${T.surf2};display:flex;
+      align-items:center;justify-content:center;color:${T.amber};flex-shrink:0}
+
+    .cyl-input{font-family:inherit;font-size:15px;color:${T.text};background:${T.bg};
+      border:1px solid ${T.line2};border-radius:10px;padding:0 14px;height:44px;
+      box-sizing:border-box;width:100%;outline:none}
+    .cyl-input:focus{border-color:${T.amber}}
+
+    .cyl-diag{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;font-size:14px}
+    .cyl-diag div{display:flex;flex-direction:column;gap:2px;min-width:0}
+    .cyl-diag .k{font-size:12px;font-weight:600;color:${T.muted}}
+    .cyl-diag .v{font-weight:700;overflow-wrap:anywhere}
+
+    .cyl-foot{text-align:center;font-size:12px;color:${T.muted};padding-top:8px}
+    .cyl-foot a{color:${T.muted}}
+
+    @media (max-width:980px){ .cyl-grid{grid-template-columns:minmax(0,1fr)} }
+    @media (max-width:560px){
+      .cyl-sec{padding:20px 18px}
+      .cyl-power{width:96px;height:96px}
+      .cyl-px{height:26px}
+    }
+  `;
+
+  /* ── Icone ── */
+  const ico = {
+    power: `<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
+    timer: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 2h6"/></svg>`,
+    wipe:  `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6"/><path d="M4 6h10"/><path d="M4 18h3"/><path d="M14 12h6"/><path d="M17 9l3 3-3 3"/></svg>`,
+    cfg:   `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.2.6.76 1 1.4 1H21a2 2 0 1 1 0 4h-.09c-.64 0-1.2.4-1.51 1z"/></svg>`,
+  };
+
+  /* ── Impalcatura ── */
+  const stile = document.createElement('style');
+  stile.textContent = CSS;
+  document.head.appendChild(stile);
+
+  const root = document.createElement('div');
+  root.className = 'cyl-wrap';
+  document.body.appendChild(root);
+
+  root.innerHTML = `
+    <header class="cyl-top">
+      <div class="cyl-brandbox">
+        <div class="cyl-mark">CYL</div>
+        <div>
+          <div class="cyl-brand">ConnectYourLife</div>
+          <div class="cyl-nome" id="cy-nome">—</div>
+        </div>
+      </div>
+      <div class="cyl-pills">
+        <div class="cyl-pill"><span class="cyl-dot" id="cy-dot"></span><span id="cy-conn">—</span></div>
+        <div class="cyl-pill" id="cy-ora">--:--:--</div>
+      </div>
+    </header>
+
+    <div class="cyl-grid">
+      <div class="cyl-col">
+        <!-- Luce -->
+        <section class="cyl-card cyl-sec" style="gap:22px;padding:26px 28px 28px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <div>
+              <div class="cyl-lab" id="cy-sub">—</div>
+              <div style="font-family:'Sora',sans-serif;font-size:26px;font-weight:600;line-height:1.1"
+                   id="cy-stato">—</div>
+            </div>
+            <div id="cy-badge" style="height:32px;padding:0 12px;border-radius:999px;display:flex;
+                 align-items:center;font-size:12px;font-weight:700;letter-spacing:.06em;
+                 text-transform:uppercase;background:${T.surf2};color:${T.muted}">—</div>
+          </div>
+
+          <div class="cyl-strip" id="cy-strip" aria-hidden="true"></div>
+
+          <div style="display:grid;grid-template-columns:168px minmax(0,1fr);gap:28px;align-items:center"
+               id="cy-rowluce">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+              <button class="cyl-btn cyl-power" id="cy-power" aria-label="Accendi o spegni">${ico.power}</button>
+              <div style="font-size:13px;font-weight:700" id="cy-plabel">—</div>
+              <div style="font-size:12px;line-height:1.4;text-align:center;color:${T.muted};max-width:168px"
+                   id="cy-phint"></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+                <label for="cy-lum" style="font-size:15px;font-weight:700">Luminosità</label>
+                <div style="font-family:'Sora',sans-serif;font-size:28px;font-weight:600;line-height:1"
+                     id="cy-lumval">—<span style="font-size:15px;color:${T.muted};margin-left:3px">%</span></div>
+              </div>
+              <input id="cy-lum" class="cyl-range" type="range" min="5" max="100" step="5" value="100">
+              <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:${T.muted}">
+                <span>1%</span><span>Il dimmer resta invariato durante on/off</span><span>100%</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Colore -->
+        <section class="cyl-card cyl-sec">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <div class="cyl-tit">Colore</div>
+            <div class="cyl-hint">I preset scrivono un solo canale: bianco puro sul W, colori solo su RGB</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px"
+               id="cy-presets"></div>
+        </section>
+
+        <!-- Effetti -->
+        <section class="cyl-card cyl-sec">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <div class="cyl-tit">Effetti</div>
+            <button class="cyl-btn" id="cy-nofx" style="height:36px;padding:0 14px;border-radius:999px;
+              background:transparent;border:1px solid ${T.line2};color:${T.text2};font-size:13px;font-weight:700">
+              Nessun effetto</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px"
+               id="cy-effetti"></div>
+        </section>
+      </div>
+
+      <div class="cyl-col">
+        <!-- Notte -->
+        <button class="cyl-btn cyl-card" id="cy-notte" style="display:flex;align-items:center;gap:14px;
+          padding:18px 22px;text-align:left">
+          <span class="cyl-ico" id="cy-notte-ico">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </span>
+          <span style="display:flex;flex-direction:column;gap:3px;flex-grow:1;min-width:0">
+            <span style="font-size:16px;font-weight:700">Notte</span>
+            <span class="cyl-hint">Bianco caldo al minimo, senza animazione</span>
+          </span>
+          <span style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+            color:${T.muted}" id="cy-notte-st">Off</span>
+        </button>
+
+        <!-- Spegnimento automatico -->
+        <section class="cyl-card cyl-sec" style="gap:12px;padding:22px 24px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="cyl-ico">${ico.timer}</span>
+            <label for="cy-auto" style="font-size:16px;font-weight:700;flex-grow:1">Spegnimento automatico</label>
+            <span style="font-family:'Sora',sans-serif;font-size:20px;font-weight:600" id="cy-autolab">—</span>
+          </div>
+          <input id="cy-auto" class="cyl-range" type="range" min="0" max="120" step="5" value="0">
+          <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:${T.muted}">
+            <span>Disattivato</span><span>120 min</span></div>
+        </section>
+
+        <!-- Animazione + velocità -->
+        <section class="cyl-card cyl-sec" style="gap:18px;padding:22px 24px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="cyl-ico">${ico.wipe}</span>
+            <span style="display:flex;flex-direction:column;gap:3px;flex-grow:1;min-width:0">
+              <span style="font-size:16px;font-weight:700">Animazione accensione</span>
+              <span class="cyl-hint">Wipe da un capo all'altro</span>
+            </span>
+            <button class="cyl-btn cyl-sw" id="cy-anim" role="switch" aria-checked="false"
+                    aria-label="Animazione accensione"><span class="cyl-knob"></span></button>
+          </div>
+          <div style="height:1px;background:${T.line}"></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label for="cy-wipe" style="font-size:15px;font-weight:700">Velocità wipe</label>
+              <span style="font-family:'Sora',sans-serif;font-size:20px;font-weight:600" id="cy-wipeval">—<span
+                style="font-size:13px;color:${T.muted}"> / 10</span></span>
+            </div>
+            <input id="cy-wipe" class="cyl-range" type="range" min="1" max="10" step="1" value="3">
+            <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:${T.muted}">
+              <span>Veloce</span><span id="cy-wipedur"></span><span>Lenta</span></div>
+          </div>
+        </section>
+
+        <!-- Diagnostica -->
+        <section class="cyl-card cyl-sec" style="gap:14px;padding:22px 24px">
+          <div class="cyl-lab">Diagnostica</div>
+          <div class="cyl-diag">
+            <div><span class="k">Indirizzo IP</span><span class="v" id="cy-ip">—</span></div>
+            <div><span class="k">Stato WiFi</span><span class="v" id="cy-wst" style="color:${T.green}">—</span></div>
+            <div><span class="k">Rete</span><span class="v" id="cy-rete">—</span></div>
+            <div><span class="k">Segnale</span><span class="v" id="cy-sig">—</span></div>
+            <div><span class="k">Uptime</span><span class="v" id="cy-up">—</span></div>
+            <div><span class="k">Pixel</span><span class="v" id="cy-px">—</span></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Configurazione -->
+    <section class="cyl-card" style="display:flex;flex-direction:column">
+      <button class="cyl-btn" id="cy-cfgbtn" style="display:flex;align-items:center;gap:12px;width:100%;
+        height:64px;padding:0 28px;background:transparent;border:none;text-align:left">
+        <span style="width:36px;height:36px;border-radius:10px;background:${T.surf2};display:flex;
+          align-items:center;justify-content:center;color:${T.muted}">${ico.cfg}</span>
+        <span style="font-size:16px;font-weight:700;flex-grow:1">Configurazione</span>
+        <span style="color:${T.muted};font-size:13px" id="cy-cfglab">Apri</span>
+      </button>
+      <div id="cy-cfg" style="display:none;padding:0 28px 26px;gap:16px;flex-direction:column"></div>
+    </section>
+
+    <div class="cyl-foot">
+      ConnectYourLife · <a href="#" id="cy-classico">pannello ESPHome classico</a>
+    </div>
+  `;
+
+  /* ── Riferimenti ── */
+  const el = {};
+  ['nome','dot','conn','ora','sub','stato','badge','strip','power','plabel','phint','lum','lumval',
+   'presets','effetti','nofx','notte','notte-ico','notte-st','auto','autolab','anim','wipe','wipeval',
+   'wipedur','ip','wst','rete','sig','up','px','cfgbtn','cfg','cfglab','classico','rowluce']
+    .forEach(k => el[k] = document.getElementById('cy-' + k));
+
+  /* ── Anteprima strip ── */
+  const pixel = [];
+  function costruisciStrip(n) {
+    el.strip.innerHTML = '';
+    pixel.length = 0;
+    const max = Math.min(n, 120);
+    for (let i = 0; i < max; i++) {
+      const d = document.createElement('div');
+      d.className = 'cyl-px';
+      el.strip.appendChild(d);
+      pixel.push(d);
+    }
+  }
+  costruisciStrip(S.numPixel);
+
+  /* ── Wipe dell'anteprima ──
+     Il firmware accende i pixel da un capo all'altro (pos 0 -> N) e li spegne
+     nel verso opposto (N -> 0), avanzando di un pixel ogni "velocita wipe"
+     frame da 10 ms. Qui si riproduce la stessa corsa, con la stessa durata,
+     cosi' l'anteprima resta in passo con la striscia vera. */
+  let wipeRaf = null, wipeAttivo = false;
+
+  function fermaWipe() {
+    if (wipeRaf) cancelAnimationFrame(wipeRaf);
+    wipeRaf = null;
+    wipeAttivo = false;
+  }
+
+  function dipingiPixel(soglia, col) {
+    for (let i = 0; i < pixel.length; i++) {
+      const acceso = i < soglia;
+      pixel[i].style.background = acceso ? col : T.surf2;
+      pixel[i].style.boxShadow  = acceso ? `0 0 10px -2px ${col}` : 'none';
+    }
+  }
+
+  function animaWipe(verso, col) {
+    fermaWipe();
+    const n = pixel.length;
+    if (!n) return;
+    // stessa durata del firmware: un pixel ogni (velocita x 10 ms)
+    const durata = Math.max(250, S.numPixel * S.wipe * 10);
+    const t0 = performance.now();
+    wipeAttivo = true;
+    (function passo(t) {
+      const q = Math.min(1, (t - t0) / durata);
+      // in accensione la soglia sale da 0 a n, in spegnimento scende da n a 0
+      const soglia = verso === 1 ? q * n : (1 - q) * n;
+      dipingiPixel(soglia, col);
+      if (q < 1) {
+        wipeRaf = requestAnimationFrame(passo);
+      } else {
+        wipeRaf = null;
+        wipeAttivo = false;
+        render();
       }
+    })(t0);
+  }
+
+  /* Quale tinta mostrare nell'anteprima.
+     L'API riporta i canali della luce (per il bianco valgono tutti 255), non
+     quello che gli effetti scrivono davvero nel buffer: "Statico Bianco"
+     accende solo il W, ma l'API dice comunque 255,255,255,255. La tinta va
+     quindi dedotta dall'effetto attivo, e solo in mancanza di questo dai canali. */
+  const TINTA_EFFETTO = {
+    'Statico Bianco': null, 'Luce Notte': null, 'Respiro Bianco': null,
+    'TV Ambient Soft': null, 'Wipe White': null, 'Stelle': null, 'Lampo': null,
+    'Statico Rosso': '#ff3b30', 'Statico Verde': '#3ddc84', 'Statico Blu': '#2f8cff',
+    'Candela': '#ffb46b', 'Fuoco': '#ff7b2e', 'Tramonto': '#ff8a50',
+    'Oceano': '#2f8cff', 'Meteora': '#9ecbff', 'Scanner': '#ff3b30',
+    'Rainbow': '#7ad0ff', 'Fade Colori': '#c9a7ff', 'Arcobaleno Lento': '#7ad0ff',
+    'Disco': '#c9a7ff',
+  };
+
+  function coloreAcceso() {
+    const fx = S.effetto;
+    if (fx && Object.prototype.hasOwnProperty.call(TINTA_EFFETTO, fx)) {
+      // null significa "e' il canale bianco": tinta secondo la strip montata
+      return TINTA_EFFETTO[fx] || biancoStrip();
+    }
+    const c = S.colore;
+    // >= e non >: con il bianco tutti i canali stanno a 255 e il maggiore stretto fallisce
+    if ((c.w || 0) >= Math.max(c.r || 0, c.g || 0, c.b || 0)) return biancoStrip();
+    return `rgb(${c.r || 0},${c.g || 0},${c.b || 0})`;
+  }
+
+  function coloreCorrente() {
+    return S.on ? coloreAcceso() : T.surf2;
+  }
+
+  /* ── Disegno ── */
+  function render() {
+    const col = coloreCorrente();
+
+    el.nome.textContent  = S.nome || '—';
+    document.title       = S.nome || 'ConnectYourLife';
+    el.sub.textContent   = `${S.nomeLuce || 'Strip'} · ${S.numPixel} pixel`;
+    const fx = (S.effetto && S.effetto !== 'None' && S.effetto !== 'Wipe White') ? S.effetto : '';
+    el.stato.textContent = S.on ? (fx || 'Accesa') : 'Spenta';
+
+    el.badge.textContent = S.on ? 'Accesa' : 'Spenta';
+    el.badge.style.background = S.on ? 'rgba(242,163,58,.16)' : T.surf2;
+    el.badge.style.color      = S.on ? T.amber : T.muted;
+
+    const luminosita = Math.round(S.brightness);
+    el.lumval.innerHTML = `${luminosita}<span style="font-size:15px;color:${T.muted};margin-left:3px">%</span>`;
+    if (document.activeElement !== el.lum) el.lum.value = luminosita;
+
+    el.power.classList.toggle('on', S.on);
+    el.plabel.textContent = S.on ? 'Spegni' : 'Accendi';
+    el.phint.textContent  = S.on
+      ? 'Lo spegnimento rientra con il wipe nel colore corrente'
+      : 'Si accende con il wipe da un capo all\'altro';
+
+    if (!wipeAttivo) dipingiPixel(S.on ? pixel.length : 0, col);
+
+    // preset ed effetti selezionati
+    el.presets.querySelectorAll('button').forEach(b =>
+      b.setAttribute('aria-pressed', String(S.on && b.dataset.fx === S.effetto)));
+    el.effetti.querySelectorAll('button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.fx === S.effetto)));
+
+    const notteOn = S.on && S.effetto === 'Luce Notte';
+    el['notte-st'].textContent = notteOn ? 'On' : 'Off';
+    el['notte-st'].style.color = notteOn ? T.amber : T.muted;
+    el['notte-ico'].style.color = notteOn ? T.amber : T.muted;
+    el.notte.style.borderColor = notteOn ? T.amber : T.line;
+
+    el.autolab.textContent = S.autoOff > 0 ? `${S.autoOff} min` : 'Off';
+    if (document.activeElement !== el.auto) el.auto.value = S.autoOff;
+
+    el.wipeval.innerHTML = `${S.wipe}<span style="font-size:13px;color:${T.muted}"> / 10</span>`;
+    if (document.activeElement !== el.wipe) el.wipe.value = S.wipe;
+    el.wipedur.textContent = `circa ${((S.numPixel * S.wipe * 10) / 1000).toFixed(1)} s`;
+    el.anim.setAttribute('aria-checked', String(S.anim));
+
+    el.ip.textContent   = S.ip;
+    el.wst.textContent  = S.statoWifi;
+    el.wst.style.color  = S.statoWifi === 'Connesso' ? T.green : T.amber;
+    el.rete.textContent = S.rete;
+    el.sig.textContent  = S.segnale;
+    el.px.textContent   = S.numPixel;
+    const m = Math.floor(S.uptime / 60), sec = Math.round(S.uptime % 60);
+    el.up.textContent   = m > 0 ? `${m} min ${sec} s` : `${sec} s`;
+    el.conn.textContent = S.rete !== '—' ? `Connesso · ${S.rete}` : 'Connesso';
+  }
+
+  /* ── Preset ed effetti ── */
+  PRESETS.forEach(p => {
+    const b = document.createElement('button');
+    b.className = 'cyl-btn cyl-chip';
+    b.dataset.fx = p.effetto;
+    b.innerHTML = `<span class="cyl-chipdot" style="background:${p.col || biancoStrip()}"></span><span>${p.label}</span>`;
+    // Anche qui si preme il pulsante del firmware: imposta skip_anim e azzera
+    // wipe_off_running prima di applicare l'effetto.
+    b.onclick = () => premi(p.label);
+    el.presets.appendChild(b);
+  });
+
+  function costruisciEffetti() {
+    el.effetti.innerHTML = '';
+    S.effetti.filter(n => n && n !== 'None').forEach(n => {
+      const b = document.createElement('button');
+      b.className = 'cyl-btn cyl-fx';
+      b.dataset.fx = n;
+      b.textContent = n;
+      b.onclick = () => {
+        if (S.on) { luce('turn_on', { effect: n }); return; }
+        // da spenta: prima l'accensione animata, poi l'effetto a wipe concluso
+        premi('Toggle Luce');
+        const attesa = Math.max(1200, S.numPixel * S.wipe * 10 + 400);
+        setTimeout(() => luce('turn_on', { effect: n }), attesa);
+      };
+      el.effetti.appendChild(b);
     });
   }
 
-  /* ── 10. Apply all enhancements + observe for DOM changes ── */
-  if (app.shadowRoot) {
-    colorButtons(app.shadowRoot);
-    classifyRows(app.shadowRoot);
-    enhanceSliders(app.shadowRoot);
-    staggerCards(app.shadowRoot);
+  /* ── Interazioni ── */
+  // Si usa il pulsante del firmware, non turn_on/turn_off diretti: lo script
+  // animated_toggle gestisce skip_anim e wipe_off_running, che governano il wipe.
+  // Chiamando la luce direttamente le due animazioni si accavallano.
+  el.power.onclick = () => premi('Toggle Luce');
+  el.nofx.onclick  = () => { luce('turn_on', { effect: 'None' }); };
+  el.notte.onclick = () => premi('Notte');
 
-    applicaTitolo();
+  el.lum.oninput  = () => { el.lumval.innerHTML = `${el.lum.value}<span style="font-size:15px;color:${T.muted};margin-left:3px">%</span>`; };
+  el.lum.onchange = () => { numero('Luminosità', el.lum.value); S.brightness = +el.lum.value; };
 
-    new MutationObserver(() => {
-      colorButtons(app.shadowRoot);
-      classifyRows(app.shadowRoot);
-      enhanceSliders(app.shadowRoot);
-      staggerCards(app.shadowRoot);
-      applicaTitolo();
-    }).observe(app.shadowRoot, { childList: true, subtree: true });
+  el.auto.oninput  = () => { el.autolab.textContent = +el.auto.value > 0 ? `${el.auto.value} min` : 'Off'; };
+  el.auto.onchange = () => { numero('Spegnimento automatico', el.auto.value); S.autoOff = +el.auto.value; };
+
+  el.wipe.oninput  = () => { el.wipeval.innerHTML = `${el.wipe.value}<span style="font-size:13px;color:${T.muted}"> / 10</span>`; };
+  el.wipe.onchange = () => { numero('Velocita wipe', el.wipe.value); S.wipe = +el.wipe.value; };
+
+  el.anim.onclick = () => { S.anim = !S.anim; interrutt('Animazione accensione', S.anim); render(); };
+
+  el.cfgbtn.onclick = () => {
+    S.configAperta = !S.configAperta;
+    el.cfg.style.display = S.configAperta ? 'flex' : 'none';
+    el.cfglab.textContent = S.configAperta ? 'Chiudi' : 'Apri';
+  };
+
+  el.classico.onclick = (ev) => {
+    ev.preventDefault();
+    const app = document.querySelector('esp-app');
+    if (app) { app.style.display = 'block'; root.style.display = 'none'; }
+  };
+
+  /* ── Pannello di configurazione ── */
+  function riga(etichetta, contenuto) {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+    d.innerHTML = `<span class="cyl-lab">${etichetta}</span>`;
+    d.appendChild(contenuto);
+    return d;
+  }
+  function campo(nomeEntita, valore, tipo) {
+    const i = document.createElement('input');
+    i.className = 'cyl-input';
+    i.type = tipo || 'text';
+    i.value = valore || '';
+    i.onchange = () => testo(nomeEntita, i.value);
+    return i;
   }
 
-  /* ── 11. Handle nested web components (esp-switch, esp-range-slider, etc.) ── */
-  async function injectNested(root) {
-    root.querySelectorAll('*').forEach(async el => {
-      if (el.shadowRoot && !el._cyl) await injectIntoShadow(el);
+  function costruisciConfig() {
+    el.cfg.innerHTML = '';
+    const griglia = document.createElement('div');
+    griglia.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px';
+
+    const mqtt = document.createElement('button');
+    mqtt.className = 'cyl-btn cyl-sw';
+    mqtt.setAttribute('role', 'switch');
+    mqtt.setAttribute('aria-checked', String(S.mqtt));
+    mqtt.innerHTML = '<span class="cyl-knob"></span>';
+    mqtt.onclick = () => { S.mqtt = !S.mqtt; interrutt('MQTT', S.mqtt); mqtt.setAttribute('aria-checked', String(S.mqtt)); };
+
+    const tipo = document.createElement('select');
+    tipo.className = 'cyl-input';
+    Object.keys(BIANCHI).forEach(o => {
+      const op = document.createElement('option');
+      op.value = o; op.textContent = o;
+      if (o === S.tipoStrip) op.selected = true;
+      tipo.appendChild(op);
     });
+    tipo.onchange = () => { S.tipoStrip = tipo.value; scelta('Tipo strip', tipo.value); render(); };
+
+    griglia.appendChild(riga('MQTT', mqtt));
+    griglia.appendChild(riga('Tipo strip', tipo));
+    griglia.appendChild(riga('Nome dispositivo', campo('Nome dispositivo', S.nome)));
+    griglia.appendChild(riga('WiFi 1 rete', campo('WiFi 1 rete', S.wifi1 || '')));
+    griglia.appendChild(riga('WiFi 1 password', campo('WiFi 1 password', '', 'password')));
+    griglia.appendChild(riga('WiFi 2 rete', campo('WiFi 2 rete', S.wifi2 || '')));
+    griglia.appendChild(riga('WiFi 2 password', campo('WiFi 2 password', '', 'password')));
+    el.cfg.appendChild(griglia);
+
+    const azioni = document.createElement('div');
+    azioni.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap';
+    [['Applica WiFi', 'Applica WiFi'], ['Restart', 'Restart']].forEach(([lab, ent]) => {
+      const b = document.createElement('button');
+      b.className = 'cyl-btn';
+      b.style.cssText = `height:44px;padding:0 20px;border-radius:999px;background:${T.surf2};
+        border:1px solid ${T.line2};font-size:14px;font-weight:700`;
+      b.textContent = lab;
+      b.onclick = () => premi(ent);
+      azioni.appendChild(b);
+    });
+    el.cfg.appendChild(azioni);
   }
 
-  if (app.shadowRoot) {
-    await injectNested(app.shadowRoot);
-    new MutationObserver(async () => injectNested(app.shadowRoot))
-      .observe(app.shadowRoot, { childList: true, subtree: true });
+  /* ── Orologio ── */
+  setInterval(() => { el.ora.textContent = new Date().toLocaleTimeString('it-IT'); }, 1000);
+  el.ora.textContent = new Date().toLocaleTimeString('it-IT');
+
+  /* ── Stato dal device ── */
+  /* Lo stream manda il messaggio completo (con domain e name) solo al primo
+     invio; gli aggiornamenti successivi portano soltanto "id" e i campi
+     cambiati. Il riconoscimento si fa quindi sull'id, mai su domain/name. */
+  function applicaEvento(d) {
+    const id = d.id || '';
+    if (!id) return;
+    const nome = id.slice(id.indexOf('/') + 1);
+
+    if (id.startsWith('light/')) {
+      S.nomeLuce = nome;
+      const eraAccesa = S.on;
+      S.on = (d.value === 'ON' || d.state === 'ON');
+      if (d.effect !== undefined) S.effetto = d.effect;
+      if (d.color) S.colore = d.color;
+      if (Array.isArray(d.effects) && d.effects.length && S.effetti.length !== d.effects.length) {
+        S.effetti = d.effects;
+        costruisciEffetti();
+      }
+      if (S.on !== eraAccesa) {
+        if (!S.anim) {
+          fermaWipe();
+          dipingiPixel(S.on ? pixel.length : 0, coloreAcceso());
+        } else if (S.on) {
+          animaWipe(1, biancoStrip());          // accensione: wipe bianco caldo
+        } else {
+          animaWipe(-1, coloreAcceso());    // spegnimento: rientra nel colore corrente
+        }
+      }
+    }
+    else if (id === 'number/Luminosità')             S.brightness = +d.value;
+    else if (id === 'number/Spegnimento automatico') S.autoOff    = +d.value;
+    else if (id === 'number/Velocita wipe')          S.wipe       = +d.value;
+    else if (id === 'switch/Animazione accensione')  S.anim = (d.value === true || d.state === 'ON');
+    else if (id === 'switch/MQTT')                   S.mqtt = (d.value === true || d.state === 'ON');
+    else if (id === 'select/Tipo strip') {
+      S.tipoStrip = d.value ?? d.state ?? S.tipoStrip;
+      el.presets.querySelectorAll('button').forEach(b => {
+        if (b.dataset.fx === 'Statico Bianco') {
+          const dot = b.querySelector('.cyl-chipdot');
+          if (dot) dot.style.background = biancoStrip();
+        }
+      });
+    }
+    else if (id === 'text/Nome dispositivo')         S.nome  = d.value ?? d.state ?? S.nome;
+    else if (id === 'text/WiFi 1 rete')              S.wifi1 = d.value ?? d.state ?? '';
+    else if (id === 'text/WiFi 2 rete')              S.wifi2 = d.value ?? d.state ?? '';
+    else if (id === 'sensor/WiFi Signal')            S.segnale = d.state || `${d.value} dBm`;
+    else if (id === 'sensor/Uptime')                 S.uptime  = +d.value || 0;
+    else if (id === 'text_sensor/Rete connessa')     S.rete      = d.state ?? d.value ?? '—';
+    else if (id === 'text_sensor/Indirizzo IP')      S.ip        = d.state ?? d.value ?? '—';
+    else if (id === 'text_sensor/Stato WiFi')        S.statoWifi = d.state ?? d.value ?? '—';
   }
 
+  let disegnoInSospeso = false;
+  function programmaRender() {
+    if (disegnoInSospeso) return;
+    disegnoInSospeso = true;
+    requestAnimationFrame(() => { disegnoInSospeso = false; render(); });
+  }
+
+  function ascolta(tentativi) {
+    // Il frontend ESPHome tiene gia' aperto uno stream su /events. Il device
+    // regge poche connessioni insieme: aprendone un secondo, quello nuovo non
+    // riceve nulla e il pannello si aggiorna solo al caricamento. Ci si aggancia
+    // quindi allo stream esistente, e solo in sua assenza se ne apre uno.
+    const src = window.source || null;
+    if (!src) {
+      if ((tentativi || 0) < 20) { setTimeout(() => ascolta((tentativi || 0) + 1), 250); return; }
+      return ascoltaProprio();
+    }
+    collega(src);
+  }
+
+  function ascoltaProprio() {
+    collega(new EventSource('/events'));
+  }
+
+  function collega(src) {
+    src.addEventListener('state', ev => {
+      if (!ev.data) return;
+      let d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+      ultimoEvento = Date.now();
+      applicaEvento(d);
+      programmaRender();
+    });
+    src.addEventListener('ping', ev => {
+      if (!ev.data) return;
+      try {
+        const d = JSON.parse(ev.data);
+        if (d.title && !S.nome) { S.nome = d.title; programmaRender(); }
+      } catch (e) { /* ping senza payload */ }
+    });
+    src.onerror = () => { /* EventSource riprova da solo */ };
+  }
+
+  // il pannello di configurazione si costruisce alla prima apertura
+  el.cfgbtn.addEventListener('click', () => { if (S.configAperta) costruisciConfig(); }, { once: false });
+
+  /* ── Rete di sicurezza ──
+     Se lo stream tace (connessione persa, limite di socket del device), il
+     pannello resterebbe fermo sull'ultimo stato noto. Ogni 3 s, quando non
+     arrivano eventi da un po', si rilegge lo stato della luce via REST: il
+     confronto con quello locale fa scattare comunque il wipe dell'anteprima. */
+  let ultimoEvento = Date.now();
+
+  async function sincronizza() {
+    if (Date.now() - ultimoEvento < 4000) return;
+    if (!S.nomeLuce) return;
+    try {
+      const r = await fetch(`/light/${enc(S.nomeLuce)}`, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      applicaEvento(d);
+      programmaRender();
+    } catch (e) { /* device momentaneamente irraggiungibile */ }
+  }
+  setInterval(sincronizza, 3000);
+
+  ascolta();
+  render();
 })();

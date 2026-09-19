@@ -792,6 +792,25 @@ button:
           effect: "Luce Notte"
       - globals.set: {id: skip_anim, value: 'false'}
 
+# ── Tipo di strip installata ──
+# Il canale W e' fisico e non cambia: quello che cambia e' la tonalita' del
+# bianco che la strip emette. La scelta serve al pannello per rappresentare
+# il colore reale nell'anteprima e nel wipe, invece di mostrare sempre lo
+# stesso bianco a prescindere dal prodotto montato.
+select:
+  - platform: template
+    name: "Tipo strip"
+    id: tipo_strip
+    icon: "mdi:led-strip-variant"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "RGBW calda 3000K"
+      - "RGBW naturale 4000K"
+      - "RGBW fredda 6500K"
+    initial_option: "RGBW calda 3000K"
+
 # ── Interruttori di configurazione (gestibili dal pannello) ──
 switch:
   - platform: template
