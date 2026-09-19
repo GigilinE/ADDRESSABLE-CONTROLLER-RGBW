@@ -572,6 +572,15 @@
     d.appendChild(contenuto);
     return d;
   }
+  function campoNum(nomeEntita, valore) {
+    const i = document.createElement('input');
+    i.className = 'cyl-input';
+    i.type = 'number'; i.min = 1; i.max = 65535;
+    i.value = valore;
+    i.onchange = () => numero(nomeEntita, i.value);
+    return i;
+  }
+
   function campo(nomeEntita, valore, tipo) {
     const i = document.createElement('input');
     i.className = 'cyl-input';
@@ -579,6 +588,12 @@
     i.value = valore || '';
     i.onchange = () => testo(nomeEntita, i.value);
     return i;
+  }
+
+  function visibilitaMqtt() {
+    el.cfg.querySelectorAll('[data-mqtt]').forEach(n => {
+      n.style.display = S.mqtt ? '' : 'none';
+    });
   }
 
   function costruisciConfig() {
@@ -591,7 +606,12 @@
     mqtt.setAttribute('role', 'switch');
     mqtt.setAttribute('aria-checked', String(S.mqtt));
     mqtt.innerHTML = '<span class="cyl-knob"></span>';
-    mqtt.onclick = () => { S.mqtt = !S.mqtt; interrutt('MQTT', S.mqtt); mqtt.setAttribute('aria-checked', String(S.mqtt)); };
+    mqtt.onclick = () => {
+      S.mqtt = !S.mqtt;
+      interrutt('MQTT', S.mqtt);
+      mqtt.setAttribute('aria-checked', String(S.mqtt));
+      visibilitaMqtt();
+    };
 
     const tipo = document.createElement('select');
     tipo.className = 'cyl-input';
@@ -605,6 +625,16 @@
 
     griglia.appendChild(riga('MQTT', mqtt));
     griglia.appendChild(riga('Tipo strip', tipo));
+
+    // I parametri del broker servono solo a MQTT acceso: tenerli sempre in vista
+    // riempie la configurazione di campi che per molti impianti restano inutili.
+    const gruppoMqtt = [
+      riga('MQTT broker', campo('MQTT broker', S.mqttBroker || '')),
+      riga('MQTT porta', campoNum('MQTT porta', S.mqttPorta || 1883)),
+      riga('MQTT utente', campo('MQTT utente', S.mqttUser || '')),
+      riga('MQTT password', campo('MQTT password', '', 'password')),
+    ];
+    gruppoMqtt.forEach(r => { r.dataset.mqtt = '1'; griglia.appendChild(r); });
     griglia.appendChild(riga('Nome dispositivo', campo('Nome dispositivo', S.nome)));
     griglia.appendChild(riga('WiFi 1 rete', campo('WiFi 1 rete', S.wifi1 || '')));
     griglia.appendChild(riga('WiFi 1 password', campo('WiFi 1 password', '', 'password')));
@@ -614,16 +644,20 @@
 
     const azioni = document.createElement('div');
     azioni.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap';
-    [['Applica WiFi', 'Applica WiFi'], ['Restart', 'Restart']].forEach(([lab, ent]) => {
+    [['Applica WiFi', 'Applica WiFi'], ['Applica MQTT', 'Applica MQTT'],
+     ['Restart', 'Restart']].forEach(([lab, ent]) => {
+      const soloMqtt = (ent === 'Applica MQTT');
       const b = document.createElement('button');
       b.className = 'cyl-btn';
       b.style.cssText = `height:44px;padding:0 20px;border-radius:999px;background:${T.surf2};
         border:1px solid ${T.line2};font-size:14px;font-weight:700`;
       b.textContent = lab;
       b.onclick = () => premi(ent);
+      if (soloMqtt) b.dataset.mqtt = '1';
       azioni.appendChild(b);
     });
     el.cfg.appendChild(azioni);
+    visibilitaMqtt();
   }
 
   /* ── Orologio ── */
@@ -664,7 +698,10 @@
     else if (id === 'number/Spegnimento automatico') S.autoOff    = +d.value;
     else if (id === 'number/Velocita wipe')          S.wipe       = +d.value;
     else if (id === 'switch/Animazione accensione')  S.anim = (d.value === true || d.state === 'ON');
-    else if (id === 'switch/MQTT')                   S.mqtt = (d.value === true || d.state === 'ON');
+    else if (id === 'switch/MQTT') {
+      S.mqtt = (d.value === true || d.state === 'ON');
+      if (S.configAperta) visibilitaMqtt();
+    }
     else if (id === 'select/Tipo strip') {
       S.tipoStrip = d.value ?? d.state ?? S.tipoStrip;
       el.presets.querySelectorAll('button').forEach(b => {
@@ -674,6 +711,9 @@
         }
       });
     }
+    else if (id === 'text/MQTT broker')    S.mqttBroker = d.value ?? d.state ?? '';
+    else if (id === 'text/MQTT utente')    S.mqttUser   = d.value ?? d.state ?? '';
+    else if (id === 'number/MQTT porta')   S.mqttPorta  = +d.value;
     else if (id === 'text/Nome dispositivo')         S.nome  = d.value ?? d.state ?? S.nome;
     else if (id === 'text/WiFi 1 rete')              S.wifi1 = d.value ?? d.state ?? '';
     else if (id === 'text/WiFi 2 rete')              S.wifi2 = d.value ?? d.state ?? '';

@@ -34,6 +34,14 @@ ota:
 
 web_server:
   port: 80
+  # Accesso protetto: il browser chiede le credenziali alla prima apertura e le
+  # riusa per tutta la sessione, comprese le chiamate REST e lo stream eventi.
+  # Si usa "basic" e non "digest" perche' e' quello che tutti i client gestiscono
+  # senza sorprese (EventSource incluso); su rete locale e' la scelta pratica.
+  auth:
+    username: !secret web_username
+    password: !secret web_password
+    type: basic
   version: 3
   local: false
   include_internal: false

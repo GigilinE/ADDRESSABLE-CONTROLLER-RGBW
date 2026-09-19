@@ -5,8 +5,8 @@
 # refill via ISR — vedi PROJECT.MD "Problema 2" per il contesto.
 
 substitutions:
-  device_name: parete-tv-c3-b
-  friendly_name: "Parete TV C3 B"
+  device_name: parete-tv-c3-c
+  friendly_name: "Parete TV C3 C"
   led_pin: GPIO5             # post level shifter 74AHCT125 (pad in alto a sx)
   num_leds: "70"             # 14 px/m × 5m
   # Reti di partenza per i campi del pannello: sono le stesse compilate nel

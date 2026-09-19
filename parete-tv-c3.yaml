@@ -1,5 +1,4 @@
 # ConnectYourLife — Parete TV (variante ESP32-C3 Super Mini)
-# Gemello di parete-tv-c3-b.yaml: stesso contenuto, cambiano solo i nomi.
 # Identico a parete-tv.yaml tranne board, GPIO dati e driver LED.
 # ATTENZIONE: il C3 non ha alcun path DMA per LED addressable (I2S non
 # supportato da NeoPixelBus su C3, use_dma solo su S3/P4). Si usa RMT con
@@ -16,6 +15,9 @@ substitutions:
   def_pass1: !secret wifi_password
   def_ssid2: !secret wifi_ssid_backup
   def_pass2: !secret wifi_password_backup
+  def_mqtt_broker: !secret mqtt_broker
+  def_mqtt_user: !secret mqtt_username
+  def_mqtt_pass: !secret mqtt_password
 
 packages:
   base: !include common/base.yaml
@@ -25,16 +27,46 @@ esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
   on_boot:
-    priority: -100
-    then:
-      - globals.set: {id: booted, value: 'true'}
-      - lambda: |-
-          // Se un campo e' vuoto (device gia' in uso prima che i default
-          // esistessero) lo si riempie con la rete compilata.
-          if (id(wifi1_ssid).state.empty()) id(wifi1_ssid).publish_state("${def_ssid1}");
-          if (id(wifi1_pass).state.empty()) id(wifi1_pass).publish_state("${def_pass1}");
-          if (id(wifi2_ssid).state.empty()) id(wifi2_ssid).publish_state("${def_ssid2}");
-          if (id(wifi2_pass).state.empty()) id(wifi2_pass).publish_state("${def_pass2}");
+    # Molto presto: si registra il riavvio prima che qualunque cosa possa
+    # bloccarsi. Il contatore viene azzerato piu' avanti, se il device
+    # dimostra di reggere (vedi l'interval "stabilita'").
+    - priority: 700
+      then:
+        - lambda: 'id(boot_falliti) += 1;'
+
+    - priority: -100
+      then:
+        - globals.set: {id: booted, value: 'true'}
+        - lambda: |-
+            // Se un campo e' vuoto (device gia' in uso prima che i default
+            // esistessero) lo si riempie con la rete compilata.
+            if (id(wifi1_ssid).state.empty()) id(wifi1_ssid).publish_state("${def_ssid1}");
+            if (id(wifi1_pass).state.empty()) id(wifi1_pass).publish_state("${def_pass1}");
+            if (id(wifi2_ssid).state.empty()) id(wifi2_ssid).publish_state("${def_ssid2}");
+            if (id(wifi2_pass).state.empty()) id(wifi2_pass).publish_state("${def_pass2}");
+
+        # MQTT si riaccende solo se l'utente lo voleva E il device non sta
+        # rimbalzando: tre riavvii ravvicinati lo tengono spento, cosi' il
+        # pannello resta raggiungibile invece di richiudersi nel ciclo.
+        - if:
+            condition:
+              lambda: 'return id(mqtt_voluto) && id(boot_falliti) <= 3;'
+            then:
+              - lambda: |-
+                  id(mqtt_client).set_broker_address(id(mqtt_broker_t).state);
+                  id(mqtt_client).set_broker_port((uint16_t) id(mqtt_porta).state);
+                  id(mqtt_client).set_username(id(mqtt_user_t).state);
+                  id(mqtt_client).set_password(id(mqtt_pass_t).state);
+              - mqtt.enable:
+              - lambda: 'id(sw_mqtt).publish_state(true);'
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(mqtt_voluto);'
+                  then:
+                    - globals.set: {id: mqtt_sospeso, value: 'true'}
+                    - logger.log: "MQTT sospeso dalla protezione: troppi riavvii ravvicinati"
+                    - lambda: 'id(sw_mqtt).publish_state(false);'
 
 esp32:
   board: nologo_esp32c3_super_mini
@@ -76,6 +108,18 @@ globals:
     type: int
     restore_value: yes
     initial_value: '3'          # frame da 10 ms per ogni pixel del wipe
+  - id: mqtt_voluto
+    type: bool
+    restore_value: yes
+    initial_value: 'false'      # l'ultima scelta fatta dall'utente
+  - id: boot_falliti
+    type: int
+    restore_value: yes
+    initial_value: '0'          # riavvii ravvicinati consecutivi
+  - id: mqtt_sospeso
+    type: bool
+    restore_value: no
+    initial_value: 'false'      # MQTT tenuto spento dalla protezione
   - id: wifi_stato
     type: int
     restore_value: no
@@ -114,6 +158,7 @@ light:
 
     # Power ON → parte sempre il wipe A→B
     on_turn_on:
+      - script.execute: lampeggio
       - if:
           condition:
             lambda: 'return !id(skip_anim) && id(anim_enabled);'
@@ -135,6 +180,7 @@ light:
 
     # Power OFF → parte il wipe B→A (riaccende per animare, poi si spegne)
     on_turn_off:
+      - script.execute: lampeggio
       - if:
           condition:
             lambda: 'return !id(wipe_off_running) && id(anim_enabled);'
@@ -485,6 +531,15 @@ light:
 
 # --- Script toggle principale + timer spegnimento ---
 script:
+  - id: lampeggio
+    # restart: piu' comandi ravvicinati producono un solo lampeggio visibile,
+    # invece di una raffica.
+    mode: restart
+    then:
+      - output.turn_on: led_bordo
+      - delay: 120ms
+      - output.turn_off: led_bordo
+
   - id: wifi_recovery
     mode: single
     then:
@@ -585,6 +640,27 @@ script:
 
 # --- Sorveglianza connessione ---
 interval:
+  - interval: 200ms
+    then:
+      - lambda: |-
+          static std::string precedente = "";
+          std::string ora = id(led_strip).get_effect_name();
+          if (ora != precedente) {
+            bool interno = (ora == "Wipe White" || precedente == "Wipe White");
+            bool primo = precedente.empty();
+            precedente = ora;
+            if (!interno && !primo) id(lampeggio).execute();
+          }
+  # Novanta secondi in piedi bastano a dire che il riavvio non era sintomo di
+  # un ciclo: il contatore torna a zero e la protezione si riarma.
+  - interval: 90s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(boot_falliti) != 0 && id(booted);'
+          then:
+            - globals.set: {id: boot_falliti, value: '0'}
+            - logger.log: "Avvio considerato stabile: contatore riavvii azzerato"
   - interval: 60s
     then:
       - if:
@@ -606,6 +682,17 @@ binary_sensor:
 
 
 text_sensor:
+  - platform: template
+    name: "Stato MQTT"
+    icon: "mdi:shield-sync"
+    entity_category: diagnostic
+    lambda: |-
+      if (id(mqtt_sospeso)) return {"Sospeso dopo riavvii"};
+      if (id(mqtt_client).is_connected()) return {"Connesso"};
+      if (id(mqtt_voluto)) return {"Connessione in corso"};
+      return {"Disattivato"};
+    update_interval: 10s
+
   - platform: template
     name: "Stato WiFi"
     icon: "mdi:wifi-cog"
@@ -640,6 +727,19 @@ sensor:
 
 # --- Slider luminosità + timer spegnimento ---
 number:
+  - platform: template
+    name: "MQTT porta"
+    id: mqtt_porta
+    icon: "mdi:numeric"
+    entity_category: config
+    min_value: 1
+    max_value: 65535
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: 1883
+
   - platform: template
     name: "Velocita wipe"
     id: num_wipe_speed
@@ -702,11 +802,33 @@ button:
   - platform: restart
     name: "Restart"
 
+
+  - platform: template
+    name: "Applica MQTT"
+    icon: "mdi:content-save-cog"
+    entity_category: config
+    on_press:
+      - script.execute: lampeggio
+      - lambda: |-
+          id(mqtt_client).set_broker_address(id(mqtt_broker_t).state);
+          id(mqtt_client).set_broker_port((uint16_t) id(mqtt_porta).state);
+          id(mqtt_client).set_username(id(mqtt_user_t).state);
+          id(mqtt_client).set_password(id(mqtt_pass_t).state);
+      - logger.log: "MQTT: parametri aggiornati, riconnessione"
+      - mqtt.disable:
+      - delay: 1s
+      - if:
+          condition:
+            switch.is_on: sw_mqtt
+          then:
+            - mqtt.enable:
+
   - platform: template
     name: "Applica WiFi"
     icon: "mdi:wifi-sync"
     entity_category: config
     on_press:
+      - script.execute: lampeggio
       # wifi.configure imposta UNA rete per volta: la seconda si prova solo
       # se la prima non aggancia entro il timeout (on_error).
       - if:
@@ -793,6 +915,18 @@ button:
           effect: "Luce Notte"
       - globals.set: {id: skip_anim, value: 'false'}
 
+# ── LED di bordo: riscontro visivo dei comandi ──
+# Sulla Super Mini il LED blu sta su GPIO8 ed e' attivo basso, da cui inverted.
+# GPIO8 e' anche pin di strapping, ma il livello conta solo all'avvio: usarlo
+# come uscita a boot concluso non interferisce.
+output:
+  - platform: gpio
+    id: led_bordo
+    pin:
+      number: GPIO8
+      inverted: true
+      ignore_strapping_warning: true
+
 # ── Tipo di strip installata ──
 # Il canale W e' fisico e non cambia: quello che cambia e' la tonalita' del
 # bianco che la strip emette. La scelta serve al pannello per rappresentare
@@ -820,10 +954,27 @@ switch:
     icon: "mdi:transit-connection-variant"
     entity_category: config
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF   # ricorda la scelta e la riapplica al boot
+    # DISABLED e non ALWAYS_OFF: in template_switch.cpp il setup di ALWAYS_OFF
+    # chiama turn_off(), che esegue la turn_off_action -> azzerava mqtt_voluto
+    # a ogni avvio, cancellando la scelta dell'utente. Con DISABLED lo switch
+    # non agisce al boot: a decidere e' l'on_boot, che incrocia mqtt_voluto
+    # con il numero di riavvii ravvicinati.
+    restore_mode: DISABLED
     turn_on_action:
+      - globals.set: {id: mqtt_voluto, value: 'true'}
+      - globals.set: {id: mqtt_sospeso, value: 'false'}
+      - globals.set: {id: boot_falliti, value: '0'}   # riaccensione manuale = nuova fiducia
+      # I parametri del pannello vanno scritti nel client PRIMA di connettersi:
+      # quelli compilati servono solo come valore di partenza dei campi.
+      - lambda: |-
+          id(mqtt_client).set_broker_address(id(mqtt_broker_t).state);
+          id(mqtt_client).set_broker_port((uint16_t) id(mqtt_porta).state);
+          id(mqtt_client).set_username(id(mqtt_user_t).state);
+          id(mqtt_client).set_password(id(mqtt_pass_t).state);
       - mqtt.enable:
     turn_off_action:
+      - globals.set: {id: mqtt_voluto, value: 'false'}
+      - globals.set: {id: mqtt_sospeso, value: 'false'}
       - mqtt.disable:
 
   - platform: template
@@ -890,6 +1041,43 @@ text:
     max_length: 63
     restore_value: true
     initial_value: "${def_pass2}"
+
+
+  - platform: template
+    name: "MQTT broker"
+    id: mqtt_broker_t
+    icon: "mdi:server-network"
+    entity_category: config
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 64
+    restore_value: true
+    initial_value: "${def_mqtt_broker}"
+
+  - platform: template
+    name: "MQTT utente"
+    id: mqtt_user_t
+    icon: "mdi:account-key"
+    entity_category: config
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 48
+    restore_value: true
+    initial_value: "${def_mqtt_user}"
+
+  - platform: template
+    name: "MQTT password"
+    id: mqtt_pass_t
+    icon: "mdi:key-variant"
+    entity_category: config
+    optimistic: true
+    mode: password
+    min_length: 0
+    max_length: 64
+    restore_value: true
+    initial_value: "${def_mqtt_pass}"
 
   - platform: template
     name: "Nome dispositivo"

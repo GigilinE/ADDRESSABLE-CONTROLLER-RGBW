@@ -27,10 +27,21 @@ mqtt:
 
   topic_prefix: connectyourlife/${device_name}
 
-  # Discovery: HA crea le entita' da solo. Da mettere a false se lo stesso
-  # device viene aggiunto a HA anche via API ESPHome, altrimenti compare due volte.
-  discovery: true
+  # Discovery disattivata: in Home Assistant i device entrano con l'integrazione
+  # ESPHome nativa (controllo locale, non dipende dal broker). Il canale MQTT
+  # resta attivo per il server esterno — pubblica stato ed esiti e riceve
+  # comandi — ma non crea entita' in HA, che sarebbero duplicati di quelle
+  # dell'integrazione nativa.
+  discovery: false
   discovery_prefix: homeassistant
+
+  # Con un broker remoto le operazioni di rete possono bloccare il loop
+  # principale abbastanza a lungo da far scattare il watchdog: su un C3, che ha
+  # un core solo, questo significa riavvii continui. L'invio asincrono toglie
+  # l'attesa dal loop. Con un broker in LAN la latenza era trascurabile e il
+  # problema non si vedeva.
+  idf_send_async: true
+  keepalive: 60s
 
   # Stesso motivo dell'api.reboot_timeout in base.yaml: senza questo il device
   # si riavvia se il broker resta irraggiungibile per 15 minuti (default), e al
